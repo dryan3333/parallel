@@ -28,9 +28,7 @@ git remote add origin https://github.com/<你的用户名>/parallel.git
 git push -u origin main
 ```
 
-3. 仓库 Settings → Secrets and variables → Actions → New repository secret，加两个：
-   - `VITE_SUPABASE_URL` = 第 1 步的 Project URL
-   - `VITE_SUPABASE_ANON_KEY` = anon public key
+3. 把 Project URL 和 publishable key 写进 `.env.production`（已随仓库提交，publishable key 本来就是给浏览器用的公开 key）。
 4. 仓库 Settings → Pages → Source 选 **GitHub Actions**。
 5. Actions 页看到 Deploy 跑完，地址是 `https://<你的用户名>.github.io/parallel/`。
 
