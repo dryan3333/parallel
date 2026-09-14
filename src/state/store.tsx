@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
+import { fmtDue } from '../lib/util';
 
 type State = {
   session: Session | null; user: User | null; ready: boolean;
@@ -152,10 +153,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const upsertTask: Actions['upsertTask'] = async (t) => {
     if (!wsId || !user) return null;
     const row = { ...t, workspace_id: wsId, created_by: t.created_by || user.id, project_id: t.project_id || null, due: t.due || null, assignee_id: t.assignee_id || null };
+    const prev = t.id ? tasks.find(x => x.id === t.id) : undefined;
     const { data, error } = await supabase.from('tasks').upsert(row).select().single();
     if (error) { toast('保存失败：' + error.message); return null; }
     setTasks(ts => { const i = ts.findIndex(x => x.id === data.id); if (i < 0) return [...ts, data as Task]; const n = ts.slice(); n[i] = data as Task; return n; });
-    return data as Task;
+    const saved = data as Task;
+    if (saved.assignee_id && saved.assignee_id !== user.id && saved.assignee_id !== prev?.assignee_id) {
+      const me = members.find(m => m.user_id === user.id); const myName = me?.display_name || me?.email?.split('@')[0] || '同事';
+      supabase.from('reminders').insert({ workspace_id: wsId, to_user: saved.assignee_id, from_user: user.id, task_id: saved.id,
+        message: `${myName} 给你指派了任务：${saved.title}${saved.due ? '，截止 ' + fmtDue(saved.due) : ''}` }).then(() => {});
+    }
+    return saved;
   };
   const deleteTask: Actions['deleteTask'] = async (id) => {
     const { error } = await supabase.from('tasks').delete().eq('id', id);

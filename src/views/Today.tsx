@@ -4,6 +4,7 @@ import type { Task } from '../lib/types';
 import { TYPES, addDays, curStage, dueClass, fmtDue, todayStr } from '../lib/util';
 import { TaskRow } from '../components/TaskRow';
 import { TaskDialog } from '../components/Dialogs';
+import { Garden } from '../components/Garden';
 
 export function Today() {
   const { projects, tasks, user, upsertTask, toast, memberName } = useStore();
@@ -35,6 +36,7 @@ export function Today() {
         <span className="spacer" />
         <div className="chips"><button className={`chip ${!mine ? 'on' : ''}`} onClick={() => setMine(false)}>全部</button><button className={`chip ${mine ? 'on' : ''}`} onClick={() => setMine(true)}>只看我的</button></div>
       </div>
+      <Garden projects={ps} tasks={tasks} />
       <div className="lane-grid">
         {ps.map(p => { const s = curStage(p); const cnt = tasks.filter(x => x.project_id === p.id && x.status !== 'done').length; const late = s && s.due && s.due < t;
           return (<a key={p.id} className={`pcard ${p.type}`} href={`#p/${p.id}`}><h3>{p.name}</h3>
