@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { Invitation, Member, Project, ProjectMember, Reminder, Task } from '../lib/types';
+import type { Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
 
 type State = {
   session: Session | null; user: User | null; ready: boolean;
   wsId: string | null; role: 'owner' | 'member' | null;
   members: Member[]; invitations: Invitation[];
-  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[];
+  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[];
 };
 type Actions = {
   reload: () => Promise<void>;
@@ -25,6 +25,8 @@ type Actions = {
   sendReminder: (to: string, message: string, taskId?: string | null, remindAt?: string | null) => Promise<string | null>;
   markRead: (id: string, read?: boolean) => Promise<void>;
   deleteReminder: (id: string) => Promise<void>;
+  upsertRoutine: (r: Partial<Routine> & { to_user: string; message: string }) => Promise<string | null>;
+  deleteRoutine: (id: string) => Promise<void>;
   updateName: (name: string) => Promise<void>;
   toast: (msg: string) => void;
   toastMsg: string;
@@ -43,6 +45,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [routines, setRoutines] = useState<Routine[]>([]);
   const [toastMsg, setToastMsg] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
   const user = session?.user ?? null;
@@ -67,7 +70,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadAll = useCallback(async (ws: string) => {
-    const [mem, prof, inv, pr, ta, pm, re] = await Promise.all([
+    const [mem, prof, inv, pr, ta, pm, re, ro] = await Promise.all([
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', ws),
       supabase.from('profiles').select('id, display_name, email'),
       supabase.from('invitations').select('id, email, created_at').eq('workspace_id', ws),
@@ -75,6 +78,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.from('tasks').select('*').eq('workspace_id', ws).order('created_at'),
       supabase.from('project_members').select('*'),
       supabase.from('reminders').select('*').eq('workspace_id', ws).order('created_at', { ascending: false }),
+      supabase.from('routines').select('*').eq('workspace_id', ws).order('created_at'),
     ]);
     const profs = new Map((prof.data || []).map(p => [p.id, p]));
     setMembers((mem.data || []).map(m => ({ user_id: m.user_id, role: m.role, display_name: profs.get(m.user_id)?.display_name || '', email: profs.get(m.user_id)?.email || '' })));
@@ -83,6 +87,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setTasks((ta.data || []) as Task[]);
     setProjectMembers((pm.data || []) as ProjectMember[]);
     setReminders((re.data || []) as Reminder[]);
+    setRoutines((ro.data || []) as Routine[]);
   }, []);
 
   const reload = useCallback(async () => { const ws = await loadMembership(); if (ws) await loadAll(ws); }, [loadMembership, loadAll]);
@@ -186,12 +191,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await supabase.from('reminders').update({ read }).eq('id', id);
   };
   const deleteReminder: Actions['deleteReminder'] = async (id) => { setReminders(rs => rs.filter(r => r.id !== id)); await supabase.from('reminders').delete().eq('id', id); };
+  const loadRoutines = async () => { if (!wsId) return; const { data } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); setRoutines((data || []) as Routine[]); };
+  const upsertRoutine: Actions['upsertRoutine'] = async (r) => {
+    if (!wsId || !user) return '未登录';
+    const { error } = await supabase.from('routines').upsert({ ...r, workspace_id: wsId, created_by: r.created_by || user.id });
+    if (error) return error.message;
+    await loadRoutines(); return null;
+  };
+  const deleteRoutine: Actions['deleteRoutine'] = async (id) => { setRoutines(rs => rs.filter(r => r.id !== id)); await supabase.from('routines').delete().eq('id', id); };
   const updateName: Actions['updateName'] = async (name) => { if (!user) return; await supabase.from('profiles').update({ display_name: name }).eq('id', user.id); if (wsId) await loadAll(wsId); };
 
   const value = useMemo<State & Actions>(() => ({
-    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders,
+    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines,
     reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, invite, revokeInvite, removeMember,
-    setProjectMember, sendReminder, markRead, deleteReminder, updateName, toast, toastMsg,
-  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
+    setProjectMember, sendReminder, markRead, deleteReminder, upsertRoutine, deleteRoutine, updateName, toast, toastMsg,
+  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

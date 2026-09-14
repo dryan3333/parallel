@@ -18,3 +18,7 @@ export type Reminder = {
   task_id: string | null; remind_at: string | null; read: boolean; created_at: string;
 };
 export type Invitation = { id: string; email: string; created_at: string };
+export type Routine = {
+  id: string; workspace_id: string; to_user: string; created_by: string; message: string;
+  hour: number; minute: number; weekdays: number[]; tz: string; active: boolean; last_fired: string | null; created_at: string;
+};

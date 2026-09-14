@@ -213,3 +213,7 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .seg button.on{background:var(--ink);color:var(--bg)}
 .toast{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--btn);color:var(--btn-ink);padding:8px 16px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
 .toast.on{opacity:1}
+
+/* routines */
+.routine-form{display:grid;grid-template-columns:160px 1fr 110px auto auto;gap:8px;align-items:center}
+@media (max-width:900px){.routine-form{grid-template-columns:1fr 1fr}.routine-form input[type=text]{grid-column:1/-1}.routine-form .chips{grid-column:1/-1}}

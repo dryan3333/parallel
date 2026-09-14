@@ -257,3 +257,5 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.workspace_members;
 exception when duplicate_object then null; end $$;
+
+-- 定时提醒见 routines.sql，需在本文件之后执行。

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../state/store';
 import { fmtTime } from '../lib/util';
 import { ReminderDialog } from '../components/Dialogs';
+import { Routines } from '../components/Routines';
 
 export function Inbox() {
   const { reminders, user, memberName, markRead, deleteReminder, tasks, members } = useStore();
@@ -31,6 +32,7 @@ export function Inbox() {
             <div className="rmsg">{r.message}</div></div>)}</div> : <div className="empty flat">还没有发过提醒</div>}
         </div>
       </div>
+      <Routines />
       <ReminderDialog open={open} onClose={() => setOpen(false)} />
     </>
   );
