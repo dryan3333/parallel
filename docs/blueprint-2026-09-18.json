@@ -1,0 +1,3469 @@
+{
+ "concepts": [
+  {
+   "angle": "文档中枢（Notion 式）：把「平行线」从「任务+PRD」升级成一家 marketing 小公司的客户档案与文档/文件中枢，但文档永远挂在客户或项目上，不做空洞 wiki",
+   "one_liner": "平行线 = 以「客户」为根的轻量工作台：每个客户下面挂 campaign（现有项目）、文档（brief/SOP/纪要/周报/日志）和文件台，今天/看板/提醒继续做执行层；Markdown 编辑器、RLS、Realtime、hash 路由全部沿用现有代码。",
+   "marketing_fit": "链条按现有对象一一落地，不新造概念：\n1) 客户 → 新增 clients 表（行业/阶段/渠道组合/联系人/快捷链接：官网、GA、Search Console、Semrush、Google Ads、小红书号）。Miranda「每天看 SEO/SEM」的入口就是客户页顶部的链接 chips，一排点完；定时提醒的消息里带客户页链接（#c/:id）。\n2) campaign → 现有 projects 加 client_id + channels（SEO/SEM/小红书/品牌出海/本地服务）+ links。产品线项目（Jarvis Solar CRM、SE Lab）client_id 为空，仍走 product 模板；运营线项目（品牌出海澳洲落地、Local Service）本身是服务线，每个真实客户 campaign 是一个 ops 项目挂到客户。\n3) 交付物 → docs（kind=brief/report/proposal 的 Markdown）+ files（category=交付物 的上传或外链）。客户页「文件」tab 就是交付物清单，报价单、月报 PDF、素材包都在这。\n4) 渠道 → 不做单独对象，用 projects.channels 枚举 + clients.links；「客户列表」可按渠道筛，Miranda 一眼看到哪些客户在跑 SEM。\n5) 数据复盘 → 两个 doc kind：log（每客户一篇「运营日志」，客户页有「记一笔」输入框，追加带日期的一行：排名/花费/异常，这是 Miranda 每日看完 SEO/SEM 后的落笔处）和 weekly（周报，一键生成骨架：本周 done_at 在本周的任务按客户/项目分组 + 各客户日志本周条目，Sara 只需补结论）。ops 阶段模板里的「复盘」阶段勾完成时，若该项目还没有 kind=review 的文档就弹一个「新建复盘文档」按钮。\n不空洞的机制：文档没有全局树，只能从客户页/项目页进入或全局搜索；新建文档必须选挂靠（客户/项目/工作区 SOP 三选一）；周报和日志由数据生成骨架；会议纪要里的 `- [ ]` 行可一键转任务（tasks.doc_id 回链）。",
+   "objects": [
+    {
+     "name": "clients（新表）",
+     "purpose": "客户档案，整个中枢的根；产品线内部项目不需要客户",
+     "fields": [
+      "id",
+      "workspace_id",
+      "name",
+      "industry text",
+      "stage text check in ('lead','active','paused','churned')",
+      "channels text[]（SEO/SEM/XHS/BRAND_AU/LOCAL）",
+      "contacts jsonb [{name,role,phone,email,wechat}]",
+      "links jsonb [{label,url}]（官网/GA/GSC/Semrush/Ads/小红书）",
+      "note text（一段 Markdown 备注）",
+      "owner_id uuid（内部负责人）",
+      "archived boolean",
+      "created_by/created_at/updated_at"
+     ],
+     "relations": [
+      "1 客户 → 多 projects（campaign）",
+      "1 客户 → 多 docs（brief/log/weekly/纪要）",
+      "1 客户 → 多 files",
+      "权限：工作区成员全可读可写，删除仅 owner（RLS：is_ws_member / is_ws_owner）"
+     ]
+    },
+    {
+     "name": "projects（现有表，小改）",
+     "purpose": "campaign / 内部产品项目，仍分 product/ops 两条 lane",
+     "fields": [
+      "+ client_id uuid null references clients on delete set null",
+      "+ channels text[] default '{}'",
+      "+ links jsonb default '[]'（该 campaign 的看板/投放后台）",
+      "prd text（保留，迁移期作为兜底；主文档改为 docs 里 kind='prd' 的一篇）"
+     ],
+     "relations": [
+      "n:1 clients",
+      "1:n docs（project_id）",
+      "1:n files（project_id）",
+      "1:n tasks（不变）",
+      "权限不变：can_edit_project"
+     ]
+    },
+    {
+     "name": "docs（新表）",
+     "purpose": "所有 Markdown 文档：PRD、brief、SOP、会议纪要、周报、运营日志、复盘、提案",
+     "fields": [
+      "id",
+      "workspace_id",
+      "title",
+      "kind text check in ('prd','brief','sop','meeting','weekly','log','review','proposal','note')",
+      "body text（Markdown）",
+      "client_id uuid null",
+      "project_id uuid null",
+      "pinned boolean default false（SOP 置顶）",
+      "archived boolean",
+      "created_by",
+      "updated_by uuid",
+      "created_at/updated_at",
+      "约束：kind='sop' 允许无挂靠，其余 client_id 或 project_id 至少一个非空（check）"
+     ],
+     "relations": [
+      "n:1 clients / n:1 projects（二选一或都填，项目挂客户时自动补 client_id）",
+      "1:n files（file.doc_id，文档附件）",
+      "1:n tasks（task.doc_id，纪要转任务）",
+      "reminders.doc_id（就某篇文档催对方）",
+      "权限：读=工作区成员；写=有 project_id 时 can_edit_project，否则工作区成员；删=创建者或 owner"
+     ]
+    },
+    {
+     "name": "files（新表 + Storage bucket `files`）",
+     "purpose": "文件台：上传件与外链统一一张表，1GB 内的放 Storage，大件用外链",
+     "fields": [
+      "id",
+      "workspace_id",
+      "kind text check in ('upload','link')",
+      "name",
+      "path text（Storage 对象路径，link 时为空）",
+      "url text（link 时的外链）",
+      "mime text",
+      "size bigint",
+      "category text check in ('contract','brief','asset','deliverable','report','other')",
+      "client_id / project_id / doc_id / task_id（均可空）",
+      "uploaded_by",
+      "created_at"
+     ],
+     "relations": [
+      "n:1 clients / projects / docs / tasks",
+      "Storage 对象路径 = {workspace_id}/{file_id}-{name}，storage.objects 的 RLS 用 (storage.foldername(name))[1]::uuid 做 is_ws_member 判断",
+      "权限：读/传=工作区成员；删=上传者或 owner"
+     ]
+    },
+    {
+     "name": "tasks（现有表，小改）",
+     "purpose": "执行层不变，只加回链",
+     "fields": [
+      "+ doc_id uuid null references docs on delete set null（从纪要/brief 生成的任务）",
+      "client_id 不加，经 project 派生"
+     ],
+     "relations": [
+      "n:1 docs",
+      "其余关系与 RLS 不变"
+     ]
+    },
+    {
+     "name": "reminders（现有表，小改）",
+     "purpose": "提醒可以指向文档，替代评论/@提及",
+     "fields": [
+      "+ doc_id uuid null references docs on delete set null"
+     ],
+     "relations": [
+      "n:1 docs；Inbox 里「关联文档」可点开 #d/:id"
+     ]
+    },
+    {
+     "name": "DOC_TPL（代码常量，不建表）",
+     "purpose": "新建文档时按 kind 套模板，沿用 util.ts 里 PRD_TPL 的做法",
+     "fields": [
+      "brief：客户/目标/受众/渠道/预算/交付物/时间/KPI",
+      "sop：适用场景/步骤/检查清单/常见问题",
+      "meeting：参会/日期/结论/待办(- [ ])/下次",
+      "weekly：由代码从 tasks + log 生成骨架后再套",
+      "log：## YYYY-MM-DD 一行一条",
+      "review：目标 vs 结果/数据/做得好/改进/下一步",
+      "proposal：沿用 Sara 报价文案习惯：只写事实不写修饰词"
+     ],
+     "relations": [
+      "kind → 模板；不存库，改模板直接改代码"
+     ]
+    }
+   ],
+   "screens": [
+    {
+     "name": "客户列表 #clients（新增主导航「客户」）",
+     "job": "Sara/Miranda 一眼看全部在营客户、各自渠道组合、活跃 campaign 数；Miranda 每天从这里开始巡检",
+     "key_ui": [
+      "按 stage 分组（在营/线索/暂停/流失），复用 Projects.tsx 的 Lane/pcard 样式，卡片顶边色按主渠道",
+      "卡片：客户名、行业、渠道 chips、内部负责人、活跃 campaign 数、待办数、最近一条日志日期（超过 3 天灰色提示「未巡检」）",
+      "顶部渠道筛选 chips（复用 .chip.on）+ 搜索框",
+      "「+ 新建客户」（成员均可）→ ClientDialog（名称/行业/阶段/渠道/负责人）",
+      "手机端单列，卡片可点进客户页"
+     ]
+    },
+    {
+     "name": "客户页 #c/:id（ClientDetail）",
+     "job": "一个客户的全部：链接、campaign、文档、文件、日志；Miranda 的每日 SEO/SEM 巡检 + 记一笔都在这一页完成",
+     "key_ui": [
+      "头部：客户名（contentEditable 重命名，沿用 ProjectDetail 的 rename）、阶段/行业/渠道 tags、内部负责人、「设置」打开 ClientDialog（联系人、链接编辑）",
+      "快捷链接 chips 一排：官网 / GA / GSC / Semrush / Google Ads / 小红书（新窗口打开）",
+      "四个 seg 切换（复用 .seg）：概览 / 文档 / 文件 / 日志",
+      "概览：campaign 列表（该客户 projects，带 Stepper mini）+ 该客户待办任务（复用 TaskRow）+ 最近 5 篇文档 + 最近 5 个文件",
+      "文档 tab：按 kind 分组列表 + 「新建」下拉（brief/纪要/复盘/提案/备注）→ 直接建 doc 并跳 #d/:id",
+      "文件 tab：内嵌 FilesPanel（见文件台）预过滤 client_id",
+      "日志 tab：kind=log 的那篇文档按日期倒序渲染；顶部「记一笔」单行输入 + 回车，前端往 body 头部插入 `## 今天日期\\n- 内容`（同日已存在则追加一行）"
+     ]
+    },
+    {
+     "name": "项目页 #p/:id（ProjectDetail 演进）",
+     "job": "campaign 工作区：PRD 主文档 + 该项目的其他文档 + 文件 + 任务 + 阶段（现有内容不动，只加两个面板和头部信息）",
+     "key_ui": [
+      "头部加：客户 tag（可点跳客户页）、渠道 chips、campaign 链接 chips；ProjectDialog 增加 client 下拉、channels 多选、links 编辑",
+      "PRD 面板改为渲染 kind='prd' 的 doc（MdEditor 组件），文案按类型显示「PRD」或「Brief」",
+      "右侧新增「文档」面板：该项目 docs 列表 + 新建（纪要/复盘/周报）",
+      "右侧新增「文件」面板：FilesPanel 预过滤 project_id，支持拖拽上传与添加外链",
+      "ops 项目「复盘」阶段勾完成且无 review 文档时显示「新建复盘文档」按钮"
+     ]
+    },
+    {
+     "name": "文档页 #d/:id（DocDetail）",
+     "job": "读/写一篇文档，看它挂在哪、附了什么、生成了哪些任务",
+     "key_ui": [
+      "头部：标题（contentEditable）、kind tag、挂靠 chips（客户/项目，可点跳）、更新时间与更新人、置顶开关（SOP）、「发提醒」按钮（ReminderDialog preset doc_id）",
+      "正文：MdEditor（从 ProjectDetail 抽出的 textarea + marked 预览 + 800ms 自动保存 + 聚焦时忽略远端覆盖），字段级 update({body}) 而不是整行 upsert",
+      "kind=meeting/brief 时头部多一个「待办行转任务」按钮：解析 `- [ ]` 行且未含 (task:) 标记的，批量建 tasks（project_id=文档项目，doc_id=本文档，负责人默认自己），并把行改写为 `- [ ] 内容 (task:短id)`",
+      "底部「附件」区：FilesPanel 预过滤 doc_id，拖拽即传",
+      "底部「由此生成的任务」列表：tasks.doc_id=本文档，复用 TaskRow",
+      "手机端：编辑/预览 seg 保留，textarea 全宽"
+     ]
+    },
+    {
+     "name": "文档中心 #docs（新增主导航「文档」，内含 文档|文件台 两个 seg）",
+     "job": "找东西：搜索、置顶 SOP、最近编辑；生成周报",
+     "key_ui": [
+      "搜索框：本地对 clients/projects/docs.title/files.name 即时匹配；回车后追加一次服务端 docs.body ilike 搜索（两人数据量足够）",
+      "置顶 SOP 一排卡片（pinned=true）",
+      "最近编辑的文档列表（updated_at 倒序，显示 kind tag + 挂靠 + 更新人）",
+      "kind 筛选 chips + 客户筛选下拉",
+      "「生成本周周报」按钮：前端汇总本周 done 任务（按客户→项目分组）+ 各客户 log 本周条目 → 新建 kind=weekly 文档（挂工作区，title=第 N 周周报）并跳转",
+      "文件台 seg：见下一屏"
+     ]
+    },
+    {
+     "name": "文件台 #docs → 文件 seg（FilesPanel 全量模式）",
+     "job": "全公司文件一处可查：按客户/项目/类型筛，上传、外链、预览、下载、删除，并看得到 1GB 用量",
+     "key_ui": [
+      "顶部用量条：sum(size)/1024MB（rpc storage_usage()），超过 80% 变黄并提示「大文件请用外链」",
+      "筛选：客户下拉 / 项目下拉 / category chips / 只看外链",
+      "表格（手机端卡片）：图标+名称、category tag、客户、项目/文档、大小、上传人、时间；行操作：预览（image/pdf 用 signedUrl 打开）、下载、复制 7 天外链、删除（上传者或 owner）",
+      "「上传」按钮 + 整块拖拽区；「添加外链」按钮（Drive/飞书/Canva/Figma 链接 + 名称 + category）",
+      "上传前前端校验：单文件 ≤ 20MB；图片 > 1600px 用 canvas 压成 webp 再传；超限直接提示改外链",
+      "同一个 FilesPanel 组件带 props {clientId?, projectId?, docId?, taskId?} 复用到客户页/项目页/文档页"
+     ]
+    },
+    {
+     "name": "全局搜索 ⌘K / 手机顶部搜索按钮",
+     "job": "两个人最常见的动作是「找那个客户/那篇 brief/那个文件」，不用记路径",
+     "key_ui": [
+      "Modal（复用 Modal.tsx）+ 一个输入框，列表分组：客户 / 项目 / 文档 / 文件 / 任务",
+      "纯前端匹配 store 里已加载的数据（docs 列表只加载不含 body 的元数据，body 进入 #d/:id 时按需拉）",
+      "上下键选择、回车跳转"
+     ]
+    },
+    {
+     "name": "今天 #today（小改）",
+     "job": "把客户巡检接进每日工作台，不新造页面",
+     "key_ui": [
+      "顶部加一行「今天要看的客户」chips：stage=active 且 channels 含 SEO/SEM 的客户，点开客户页；已记日志的变灰勾",
+      "定时提醒消息模板允许带 #c/:id，Inbox 里可点"
+     ]
+    }
+   ],
+   "keep_light": [
+    "不做块编辑器/富文本/协同光标：文档只是 Markdown textarea + marked 预览，沿用现有 800ms 自动保存；但 upsert 改成字段级 update，避免两人互相覆盖",
+    "不做无限层级页面树、不做文件夹：文档只有一层，靠「挂靠（客户/项目）+ kind + 搜索」组织；文件靠「客户/项目/文档 + category」筛选",
+    "不做评论、@提及、活动流：就某篇文档催人用现有 reminders（加 doc_id）",
+    "不做文档版本历史：只记 updated_at/updated_by；真要回滚靠 Supabase 每日备份或以后再加 doc_revisions（最近 10 版）",
+    "不做文档级细粒度权限：文档继承所属项目的 can_edit_project；客户级/SOP 文档两人都可编辑；删除仅创建者或 owner",
+    "不做 Office/视频在线预览：只预览图片和 PDF（signed URL），其他类型直接下载",
+    "不做 Google Drive / 飞书云盘 OAuth 同步：大文件、设计源文件、视频一律「添加外链」进文件台",
+    "不做 Semrush/GA/Google Ads API 拉数：只存链接 + 人工日志（记一笔）+ 周报骨架；数据看板是另一个角度的事",
+    "不做自由标签系统：kind、category、channels 都是固定枚举，改枚举改代码",
+    "不做中文全文检索索引（tsvector 对中文分词差）：title 本地匹配 + body ilike 子串，两人数据量够用",
+    "不做对外客户门户/公开分享页：对外只给 7 天有效的 signed URL",
+    "不做多工作区、不做客户级成员权限：Miranda 看得到全部客户（两人公司可接受）",
+    "不改现有六个视图的核心交互，只加面板与 tag，确保旧数据零迁移压力（prd 列保留作兜底）"
+   ],
+   "reuse": [
+    "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx 的 PRD 编辑逻辑（textarea + marked renderMd + 800ms 防抖 + lastSaved/activeElement 防覆盖 + 「已保存 hh:mm」提示）→ 原样抽成 src/components/MdEditor.tsx，被 DocDetail、ClientDetail 备注、项目 PRD 面板共用",
+    "/Users/sara/Projects/parallel/src/lib/util.ts 的 PRD_TPL/STAGE_TPL 模式 → 新增 DOC_TPL: Record<DocKind, string> 与 DOC_KINDS 标签表；现有 PRD_TPL 直接变成 DOC_TPL.prd",
+    "/Users/sara/Projects/parallel/src/state/store.tsx 的整套模式：loadAll 的 Promise.all 追加 clients/docs(不含 body)/files 三张表；realtime 订阅数组追加 'clients','docs','files'；upsertProject/deleteProject 复制为 upsertClient/upsertDoc/upsertFile/deleteX；canEdit(projectId) 直接用于 doc/file 的写权限判断",
+    "/Users/sara/Projects/parallel/supabase/schema.sql 的 is_ws_member / is_ws_owner / can_edit_project 三个 security definer 函数 → clients/docs/files 的 RLS 直接调用，不新写权限基元；storage.objects 策略也用 is_ws_member((storage.foldername(name))[1]::uuid)",
+    "/Users/sara/Projects/parallel/src/components/Dialogs.tsx 的 ProjectDialog 结构（Modal + 表单 + owner 删除 confirm）→ ClientDialog / DocDialog（新建选 kind+挂靠）/ LinkDialog（外链）",
+    "/Users/sara/Projects/parallel/src/components/Modal.tsx（原生 dialog）→ 全局搜索面板与所有新弹窗",
+    "/Users/sara/Projects/parallel/src/components/Tags.tsx → 加 ClientTag、KindTag、CategoryTag、ChannelTag，沿用 .tag 样式",
+    "/Users/sara/Projects/parallel/src/views/Projects.tsx 的 Lane + .pcard 卡片 → 客户列表按 stage 分组直接复用（styles.css .lane/.pcard/.two）",
+    "/Users/sara/Projects/parallel/src/App.tsx 的 hash 路由 parse()：加 'c/'→client、'd/'→doc、'clients'、'docs' 四个分支；nav 数组加「客户」「文档」；tabbar 手机端改 5 个（今天/客户/看板/文档/提醒），本周与成员收进「更多」",
+    "/Users/sara/Projects/parallel/src/components/TaskRow.tsx → 客户页待办、文档页「由此生成的任务」直接复用",
+    "ReminderDialog 已有 preset(task) 参数 → 扩展 preset.docId，Inbox 关联文档可点",
+    "ops 的 STAGE_TPL『复盘』阶段 + toggleStage → 触发「新建复盘文档」提示的钩子点",
+    "supabase-js 已在依赖里，Storage 上传/signedUrl/remove 不需要新包；marked 已有；不新增任何 npm 依赖",
+    "定时提醒 routines 的 message 文本 → 直接写入客户页链接 #c/:id，Inbox 渲染时把 #c/、#p/、#d/ 转成可点链接"
+   ],
+   "file_hub": "存储：Supabase Storage 新建私有 bucket `files`（不勾 public），对象路径固定 `{workspace_id}/{file_id}-{原文件名}`，第一段就是工作区 id，storage.objects 上三条策略：select/insert 要求 is_ws_member((storage.foldername(name))[1]::uuid)，delete 要求 owner 或 objects.owner = auth.uid()。元数据在 public.files 表（kind upload|link、name、path、url、mime、size、category、client_id/project_id/doc_id/task_id、uploaded_by），加入 supabase_realtime。\n上传流程：前端 <input type=file multiple> 或拖拽 → 校验单文件 ≤ 20MB（免费版对象上限 50MB，留余量）→ 图片 >1600px 用 canvas 转 webp → supabase.storage.from('files').upload(path, blob, {upsert:false}) → insert files 行；失败则 remove 对象回滚。删除：先 storage.remove([path]) 再 delete 行；每周 pg_cron 扫一次「有对象无行」的孤儿（可选，先不做）。\n组织：不做文件夹。四个维度筛选：客户、项目、所属文档/任务、category（合同报价/brief/素材/交付物/报告数据/其他）。同一个 FilesPanel 组件按 props 预过滤，嵌在客户页、项目页、文档页、任务对话框（任务附件，最后做）；#docs 的「文件台」seg 是全量模式。\n配额：新增 rpc storage_usage(ws) 返回 sum(size)；文件台顶部显示 x / 1024 MB 用量条，80% 变黄；规则写在界面提示里：视频、设计源文件、大素材包 → 「添加外链」（Drive/飞书/Canva/Figma 链接），文件台里外链与上传件同列展示，只是图标不同、没有大小。按 marketing 公司实际：合同/报价 PDF、brief、月报 PDF、图片素材、Excel 数据导出都在 1GB 内够用两年。\n权限：读/上传 = 工作区成员；删除 = 上传者或 owner；挂在项目下的文件不再叠加 can_edit_project（避免 Miranda 传不了自己负责客户的文件）。\n分享：内部直接 createSignedUrl(path, 3600) 打开/下载；对外「复制 7 天外链」= createSignedUrl(path, 7*86400)，toast 提示「拿到链接的人都能下载」；不做公开桶。\n预览：image/* 与 application/pdf 用 signed URL 在新窗口打开，其余下载。\n迁移：无历史文件需要迁；上线后把现有放在 Drive/飞书里的客户文件按「先外链、再逐步上传关键交付物」处理。",
+   "risks": [
+    "空洞化风险最大来自数据不进来：客户表若没有一次性把在营客户（现有客户清单表格）导入，客户页是空的，两人还是回到聊天和 Drive。建议第一步就写 seed SQL/CSV 导入脚本，把客户、渠道、链接一次灌进去，再上线界面",
+    "1GB Storage 是硬顶且免费版没有超额保护：靠前端 20MB 限制 + 用量条 + 外链策略约束；若 Sara 习惯把设计源文件/视频丢进来，一个月就满。需要在文件台明确写规则",
+    "storage.objects 的 RLS 写错等于客户文件公开：bucket 必须私有，策略上线前用第二个账号验证跨工作区读不到；signed URL 一旦复制出去 7 天内任何人可下",
+    "现有「整行 upsert 互相覆盖」问题在文档增多后会更频繁（两人同时改同一篇 brief 或日志）：docs 必须一开始就用字段级 update({body}).eq('id')，并把 updated_at 乐观锁或至少「对方刚改过」提示一起做；「记一笔」并发追加尤其要走服务端 rpc append_log(doc_id, line) 而不是前端读改写",
+    "Realtime DELETE 事件因 filter 收不到（现有高危 gap）会同样影响 clients/docs/files：新表建表时直接 alter table ... replica identity full，或去掉 filter",
+    "docs.body 若随 loadAll 全量拉取，几十篇长文档会拖慢启动：docs 列表只 select 元数据，body 进入 #d/:id 时按需拉；搜索 body 走服务端 ilike",
+    "导航从 6 项变 8 项，手机 tabbar 放不下：需要重排为 5 项 + 更多，Miranda 常用的「客户/提醒/今天」必须在首排",
+    "PRD 从 projects.prd 迁到 docs 的双写期：一次性 SQL 把非空 prd 复制成 kind='prd' 的 doc，前端只读 docs；prd 列保留但不再写，避免两处不一致",
+    "权限模型放宽（客户档案/客户级文档两人都可编辑、文件上传不看项目权限）与 README 现有「按项目分权」口径不一致，需要 Sara 拍板并更新 README",
+    "Supabase 免费项目 7 天无活动会暂停，文件台/文档都打不开；两人天天用问题不大，但假期后要知道去控制台 Restore",
+    "周报「一键生成」依赖任务 done_at 和日志被认真填写；若 Miranda 不记日志，周报只有任务清单没有数据，功能会被认为没用——上线前先跑两周日志习惯再放周报按钮"
+   ]
+  },
+  {
+   "angle": "沟通流（Slack 式）：把两个人的工作沟通从微信搬进「平行线」，但不是做聊天室，而是做「挂在对象上的动态流」——每条消息必须属于某个项目/任务/客户，可 @、可转任务、可附文件、可折叠成摘要。",
+   "one_liner": "平行线 = 一家小 marketing 公司的「工作流 + 文件台」：客户和 campaign 是骨架，任务和阶段是进度，动态流是沟通，文件台是交付物，微信只剩下和客户外部聊天。",
+   "marketing_fit": "这条链在系统里的落法：\n1. 客户（clients）：新增轻量客户档案（名称、联系人、在营渠道、状态）。运营线项目挂 client_id，一个客户可以有多个 campaign（如「Lee Massage · SEO 月度」「Lee Massage · 小红书」）。Miranda 每天看的 11 个在营 SEO/SEM 客户就是 11 个挂在客户下的运营线项目。\n2. campaign = 现有 project（ops 类型）：沿用「策划→准备→执行→复盘」四阶段，加 channels 标签（SEO/SEM/小红书/网站/Meta/EDM 预设 chip），一句话目标就是 KPI。\n3. 交付物 = 现有 task + 文件：任务完成时可附「交付物」文件（files.task_id），完成动作自动在项目动态里生成一条系统事件「Miranda 完成了『9 月 SEO 月报』（附 PDF）」。文件台按「素材 / 交付物 / 数据 / 合同」四个固定文件夹归类，客户要什么一眼找到。\n4. 渠道 = 标签维度：posts / tasks / projects 共用同一套 tags text[]，动态流可按渠道筛，「小红书」一筛就是全公司所有小红书相关的反馈、数据、交付。不做独立频道表。\n5. 数据复盘 = kind='data' 的动态帖：Miranda 每天 9:00 收到定时提醒，点一下打开预填 composer（项目已选、kind=数据、标签 SEO/SEM、模板「排名 / 点击 / 花费 / 备注」），填完就是一条带日期的数据记录，按项目筛就是该客户的数据时间线；月末「复盘」阶段勾完成时，置顶一条 kind='data' 的复盘帖。\n6. 客户反馈 = kind='feedback' 的动态帖：Sara 从微信/邮件/电话拿到的客户意见，30 秒录入（来源 + 原话 + 标签），右上角「转任务」一键生成任务并回链（tasks.source_post_id），从此「客户上周说的那件事」有据可查。\n7. 周报草稿：项目页「导出本周」把该项目本周的 data/feedback/update 帖 + 完成任务 + 新交付物文件拼成 Markdown 复制到剪贴板，稍加修改就能发给客户——这是 marketing 公司每周最耗时的活。",
+   "objects": [
+    {
+     "name": "clients（新）",
+     "purpose": "客户档案，是运营线的一级分组；项目、文件、反馈都能按客户聚合。",
+     "fields": [
+      "id",
+      "workspace_id",
+      "name",
+      "industry",
+      "contacts jsonb（[{name, role, wechat, email}]）",
+      "channels text[]（在营渠道）",
+      "status（active | paused | lost）",
+      "notes text（Markdown，合同要点/注意事项）",
+      "archived",
+      "created_at"
+     ],
+     "relations": [
+      "1 → N projects（projects.client_id 可空，产品线项目不挂客户）",
+      "1 → N files（files.client_id）",
+      "通过 projects 间接聚合 posts / tasks"
+     ]
+    },
+    {
+     "name": "projects（改）",
+     "purpose": "沿用现有项目 = campaign；产品线不变，运营线挂客户。",
+     "fields": [
+      "+ client_id uuid null",
+      "+ channels text[]（预设 SEO/SEM/小红书/网站/Meta/EDM，可自定义）",
+      "现有 name/type/goal/stages/prd/archived 不动"
+     ],
+     "relations": [
+      "N → 1 clients",
+      "1 → N posts（项目动态流）",
+      "1 → N files",
+      "1 → N tasks（现有）"
+     ]
+    },
+    {
+     "name": "posts（新，核心）",
+     "purpose": "沟通流唯一的消息对象：人写的更新/反馈/数据/备注 + 系统生成的事件，全部落在这一张表。",
+     "fields": [
+      "id",
+      "workspace_id",
+      "project_id null（null = 公司动态，如「本周排期」）",
+      "task_id null（任务评论）",
+      "client_id null（冗余，便于按客户筛）",
+      "author_id",
+      "kind（update | feedback | data | note | system）",
+      "body text（Markdown，沿用 marked 渲染）",
+      "tags text[]",
+      "mentions uuid[]（@ 选人时存 uuid，不靠昵称解析）",
+      "file_ids uuid[]",
+      "parent_id null（只允许一层回复）",
+      "pinned boolean",
+      "acked_by uuid[]（「收到」，替代微信里的「好的」）",
+      "source text null（feedback 来源：wechat | email | call | meeting）",
+      "created_at",
+      "edited_at"
+     ],
+     "relations": [
+      "N → 1 projects / tasks / clients",
+      "@ 提及 → 自动插一条 reminders（post_id）",
+      "feedback 帖「转任务」→ tasks.source_post_id 回链",
+      "system 帖由触发器生成：任务完成、阶段完成、文件上传（UI 折叠为「今天完成 3 项 · 新增 2 个文件」一行）"
+     ]
+    },
+    {
+     "name": "files（新）",
+     "purpose": "文件台元数据；真实字节在 Supabase Storage 私有桶，外链（Drive/Canva/Semrush 报告）也作为一行记录。",
+     "fields": [
+      "id",
+      "workspace_id",
+      "client_id null",
+      "project_id null",
+      "task_id null",
+      "post_id null",
+      "name",
+      "folder（素材 | 交付物 | 数据 | 合同 | 其他）",
+      "kind（file | link）",
+      "path text null（Storage 路径 {ws}/{project|_}/{id}-{name}）",
+      "url text null（link 用）",
+      "mime",
+      "size bigint",
+      "version int default 1",
+      "replaces_id uuid null（同名新版指向旧版）",
+      "uploaded_by",
+      "created_at"
+     ],
+     "relations": [
+      "N → 1 clients / projects / tasks / posts",
+      "上传成功 → 触发器写一条 system post"
+     ]
+    },
+    {
+     "name": "reminders（改）",
+     "purpose": "保留为通知中心：@提及、指派、定时、周摘要、手动催办全走这一张表和现有实时/弹窗链路。",
+     "fields": [
+      "+ post_id uuid null（点通知跳到那条动态）",
+      "+ kind（mention | assign | routine | digest | manual）",
+      "现有 to_user/from_user/message/task_id/remind_at/read 不动"
+     ],
+     "relations": [
+      "N → 1 posts",
+      "N → 1 tasks（现有）",
+      "由 routines / 触发器 / 客户端生成"
+     ]
+    },
+    {
+     "name": "routines（改）",
+     "purpose": "现有定时提醒扩两种模式：到点提醒去填数据帖；每周一生成一条周摘要动态。",
+     "fields": [
+      "+ mode（reminder | post_prompt | weekly_digest）",
+      "+ project_id uuid null（post_prompt 指向哪个项目）",
+      "+ preset jsonb null（{kind:'data', tags:['SEO','SEM'], template:'...'}）",
+      "现有 hour/minute/weekdays/tz/active/last_fired 不动"
+     ],
+     "relations": [
+      "生成 reminders（reminder / post_prompt）",
+      "生成 posts kind=system（weekly_digest，用 SQL 聚合上周完成任务数、新帖数、新文件数）"
+     ]
+    },
+    {
+     "name": "tasks（改）",
+     "purpose": "现有任务对象，加两个回链字段即可接入沟通流。",
+     "fields": [
+      "+ source_post_id uuid null（由哪条客户反馈转来）",
+      "+ tags text[]（渠道标签，与 posts 同一套）",
+      "评论 = posts.task_id，附件 = files.task_id，不新增列"
+     ],
+     "relations": [
+      "1 → N posts（评论）",
+      "1 → N files（交付物）",
+      "N → 1 posts（来源反馈）"
+     ]
+    }
+   ],
+   "screens": [
+    {
+     "name": "动态（替换底部 tab「提醒」，Inbox.tsx 演进）",
+     "job": "早上打开先看这里：全公司昨天到现在发生了什么、谁 @ 了我、客户说了什么，然后在这里回复或转任务。",
+     "key_ui": [
+      "顶部筛选 chips：全部 / @我 / 客户反馈 / 数据 / 文件 / 系统事件；第二行按客户或项目筛（select）",
+      "流按天分组，每条 = 作者 + 项目标签 + kind 色标 + Markdown 正文 + 附件缩略 + 标签；hover/长按出「回复 / 收到 / 转任务 / 置顶」",
+      "底部固定 composer：选项目（默认最近用的）、kind 四选一、@ 选人（列出成员，存 uuid）、拖拽/粘贴附件、标签 chip；Cmd+Enter 发送",
+      "系统事件默认折叠成一行「今天：完成 3 项 · 新增 2 个文件 · 1 个阶段完成」，点开展开",
+      "右侧（桌面）/顶部折叠区（手机）：现有通知列表（reminders）+「全部已读」按钮 + 现有定时提醒面板（Routines.tsx 原样搬入）",
+      "tab 徽标 = 未读 reminders 数（沿用 App.tsx 的 unread）"
+     ]
+    },
+    {
+     "name": "项目页（ProjectDetail.tsx 扩展）",
+     "job": "在一个项目里同时看沟通、PRD 和文件，不用切页；周末给客户出周报。",
+     "key_ui": [
+      "左侧主区 seg 由「编辑 | 预览」改为三段「动态 | PRD | 文件」，PRD 段内保留原编辑/预览",
+      "动态段：置顶帖在最上（KPI、客户要求、账号信息），下面是本项目流 + 同款 composer（项目已锁定）",
+      "feedback 帖右上角「转任务」→ 打开 TaskDialog 预填标题=帖子首行、note=原文、project 已选，保存后帖子下方显示「已转为任务 → 标题」",
+      "文件段：复用文件台组件，过滤到本项目，按四个文件夹分组",
+      "顶部 row 加「导出本周」按钮：弹周选择 → 拼 Markdown（本周 update/data/feedback 帖 + 完成任务 + 新交付物）→ 复制到剪贴板 + toast",
+      "右侧 side 加「客户」小卡（联系人、渠道，点进客户页）"
+     ]
+    },
+    {
+     "name": "任务弹窗（TaskDialog 扩展）",
+     "job": "围绕一个具体任务讨论、交付、催办，不用去微信里说「那个任务」。",
+     "key_ui": [
+      "表单下方加「讨论」区：posts.task_id 的线程 + 单行输入（支持 @）",
+      "「附件」行：files.task_id 列表 + 上传按钮（完成任务时提示「要附交付物吗」）",
+      "「提醒负责人」按钮：打开现有 ReminderDialog 并 preset {to: assignee_id, taskId, message}（代码已支持 preset，只是没人调用）",
+      "若 source_post_id 存在，顶部显示「来自客户反馈：…」可点回原帖",
+      "删除加 confirm"
+     ]
+    },
+    {
+     "name": "文件台（新 tab「文件」，Files.tsx）",
+     "job": "找任何客户的任何交付物 10 秒内找到；给客户发文件时复制一个 7 天有效链接。",
+     "key_ui": [
+      "左栏树：客户 → 项目（产品线项目单独一组，公司级「未归属」一组）；手机端变成顶部两级 select",
+      "右栏列表：文件名 / 文件夹 chip / 版本 v2 / 上传者 / 大小 / 时间；行内「预览（图片、PDF 浏览器原生）/ 下载 / 复制 7 天链接 / 历史版本 / 删除」",
+      "顶部：搜索框（名称 ilike）、文件夹筛选 chips、「上传」（拖拽整个区域、粘贴截图）、「添加链接」（Drive/Canva/Semrush 报告 URL）",
+      "右上角配额条：已用 xxx MB / 1 GB（sum(size)），>800MB 变黄并提示「大文件请用链接」",
+      "同名同项目上传时弹「作为新版本（保留旧版）/ 替换」二选一"
+     ]
+    },
+    {
+     "name": "今天（Today.tsx 顶部加一块）",
+     "job": "5 秒知道自上次打开以来对方做了什么、有没有人 @ 我、客户有没有新反馈；Miranda 一键进入每日数据打卡。",
+     "key_ui": [
+      "花园下方加「自上次打开以来」卡：新动态 N · @我 N · 客户反馈 N · 新文件 N · 对方完成 N，每个数字点击跳到动态页对应筛选（localStorage 记 last_seen_at）",
+      "定时提醒（mode=post_prompt）到点后，今天页顶部出现一条「填今天的 SEO/SEM 数据帖」按钮，点击直接打开预填 composer；填完提醒自动已读",
+      "快速添加的项目下拉改为 canEdit 过滤（修现有 bug）"
+     ]
+    },
+    {
+     "name": "客户（轻量，#clients / #c/:id，owner 建、全员可看）",
+     "job": "接电话时 10 秒调出这个客户的联系人、在营渠道、最近反馈和最新交付物。",
+     "key_ui": [
+      "列表：客户名 / 状态 / 渠道 chips / 在营项目数 / 最近一条反馈时间",
+      "详情：联系人卡（可复制微信/邮箱）、备注 Markdown、项目列表（复用 pcard）、最近 5 条 feedback 帖、文件（复用文件台过滤）、本周动态",
+      "新建/编辑用现有 Modal + 表单样式；archived 归档同项目"
+     ]
+    },
+    {
+     "name": "成员 / 设置（入口调整，代码不动）",
+     "job": "把低频页面挪出底部 tab，给「动态」「文件」腾位置。",
+     "key_ui": [
+      "顶栏右侧齿轮 → 成员页（Members.tsx 原样）",
+      "手机底部 tab 变为：今天 / 本周 / 看板 / 项目 / 动态 / 文件；成员从 tab 移到顶栏"
+     ]
+    }
+   ],
+   "keep_light": [
+    "不做实时打字聊天室、私聊 DM、多频道：每条消息必须挂项目/任务或进「公司动态」，没有「随便聊」的地方，噪音从结构上挡掉",
+    "不做无限嵌套线程：posts.parent_id 只允许一层回复，回复的回复禁止",
+    "不做表情反应库：只有一个「收到」（acked_by），替代微信里的「好的」「收到」",
+    "不做富文本编辑器：composer 是 textarea + Markdown，沿用 marked 和 .md 样式",
+    "不做逐条已读回执：只有通知（reminders）有已读，动态帖本身不记谁看过",
+    "不做全文搜索引擎：posts.body 和 files.name 用 Postgres ilike（数据量几千条内够用），不上 tsvector 也不上外部服务",
+    "不做文件预览转码、缩略图服务：图片/PDF 用浏览器原生打开，其它类型只下载",
+    "不做公开分享页：分享 = Storage 签名 URL（7 天），不做匿名可访问的落地页",
+    "不做客户登录/客户门户：客户永远不进系统，对外仍靠微信/邮件，系统只负责「记录」",
+    "不做审批流、工时、日历同步、AI 摘要：周摘要是纯 SQL 聚合",
+    "不做多工作区切换：仍然一个工作区，成员 3–5 人也够",
+    "不改现有权限模型：发帖/评论/上传对所有工作区成员开放（沟通不受项目编辑权限制），改 PRD/阶段/任务仍按 project_members；只加不减",
+    "Web Push 不在这一期：@ 和定时提醒仍走现有「应用开着时弹通知 + 收件箱」，先把 Android 的 new Notification 改成 showNotification 修好",
+    "系统事件只记三种：任务完成、阶段完成、文件上传；不记编辑、改期、改状态等细碎动作"
+   ],
+   "reuse": [
+    "通知链路整套复用：reminders 表 + RLS（r_select/r_insert）+ store.tsx 的 realtime INSERT 弹 Notification + App.tsx 未读徽标；@提及只是多插一行 reminders（加 post_id、kind 两列）——/Users/sara/Projects/parallel/src/state/store.tsx、/Users/sara/Projects/parallel/supabase/schema.sql",
+    "指派自动提醒的写法（upsertTask 里 saved.assignee_id !== prev?.assignee_id 就 insert reminders）直接照抄成「@提及自动提醒」——store.tsx upsertTask",
+    "定时提醒 routines + pg_cron run_routines() 扩两个 mode（post_prompt / weekly_digest），Routines.tsx 表单加一个 mode select 和项目 select 即可——/Users/sara/Projects/parallel/supabase/routines.sql、/Users/sara/Projects/parallel/src/components/Routines.tsx",
+    "RLS 基元 is_ws_member / is_ws_owner / can_edit_project 直接用于 posts / files / clients 策略，也用于 storage.objects 策略——schema.sql 第 90–112 行",
+    "store.tsx 的 loadAll + refetch(table) 模式：posts/files/clients 三张表加进 Promise.all 和 realtime 订阅列表（posts 改为只拉最近 30 天 + 按项目按需追加）",
+    "Markdown 渲染 renderMd + .md 样式，帖子正文和客户备注直接用——/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx、src/styles.css 第 166–178 行",
+    "Inbox.tsx 的 .rrow/.rhead/.rmsg/.racts 样式和「收到的/发出的」双栏布局，就是动态帖的行样式和「流 + 通知」的布局起点",
+    "ReminderDialog 已支持 preset({to, message, taskId})，TaskDialog 加一个按钮调用即可（目前没人调用）——/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+    "Modal（原生 dialog）、Tags（ProjTag/WhoTag/DueTag）、chips 样式、pcard 卡片、page-h 页头：客户页、文件台、composer 全部用现成组件拼",
+    "ProjectDetail 的 seg 切换（编辑/预览）扩成三段（动态/PRD/文件），布局 .detail + .side 不动",
+    "Today.tsx 的 Sec 分组组件和 quick 表单结构，用于「自上次打开以来」摘要卡",
+    "PRD_TPL 的模板机制（util.ts）复用为数据帖模板（SEO/SEM 日报字段）和客户备注模板",
+    "hash 路由 parse()（App.tsx）加两条：files、clients / c/:id，无需路由库",
+    "部署流水线 deploy.yml 零改动；新 SQL 按现有方式贴 SQL Editor（建议顺手改成 supabase/migrations 目录并在 README 记录执行到哪个文件）"
+   ],
+   "file_hub": "存储：Supabase Storage 建一个私有桶 files（不开 public）。对象路径固定为 {workspace_id}/{project_id 或 _}/{file_id}-{原文件名}，storage.objects 的 RLS 用 is_ws_member((storage.foldername(name))[1]::uuid) 判读写，删除限 uploaded_by 本人或 owner。元数据在 public.files 表（见对象），列表和搜索只查表不列桶。\n\n组织：三层固定结构，不做自由建文件夹——客户 → 项目 → 四个固定文件夹（素材 / 交付物 / 数据 / 合同，另加「其他」）。产品线项目没有客户，挂在「内部」组下；不挂项目的文件进「公司」组。文件可同时挂在任务（交付物）或动态帖（附件）上，但只存一份，files 表的 task_id / post_id 是回链。\n\n上传：文件台、composer、任务弹窗三处共用一个 useUpload hook：先 insert files 行拿 id → supabase.storage.from('files').upload(path) → 失败则删行。图片在浏览器用 canvas 压到长边 1600px、质量 0.85 再上传（截图和小红书素材是主要体积来源）；单文件前端限 25MB，超过提示「用链接」。视频、原始设计稿一律用 kind='link' 存 Google Drive / Canva / Figma 地址。\n\n版本：同项目同名再传时二选一——「新版本」（version+1，replaces_id 指向旧版，列表默认只显示最新，可展开历史）或「替换」（删旧对象与旧行）。不做自动版本。\n\n额度：1GB 免费。文件台右上角配额条 = sum(files.size)（一条 SQL 视图 ws_storage_usage），800MB 变黄、950MB 上传前弹确认；「历史版本」和「已归档项目的文件」是清理的第一批候选，文件台提供「按项目查看占用」列表。\n\n分享：复制签名链接 = storage.createSignedUrl(path, 7*24*3600)，7 天失效，给客户发就用这个；不做永久公开链接。多文件打包下载不做（前端逐个下载）。\n\n权限：读 = 工作区全员；上传 = 全员（沟通附件不受项目编辑权限制）；删除 = 上传者或 owner；客户/合同文件夹可加一个 owner_only 开关（files.restricted boolean，RLS 加 is_ws_owner）——第一期不做，字段先留。\n\n与流的联动：上传成功由触发器写一条 kind=system 的帖「Miranda 上传了 9 月 SEO 月报.pdf（交付物）」，动态页折叠显示；任务完成时若 files.task_id 非空，系统帖带附件缩略。周报导出把本周新交付物列成清单。",
+   "risks": [
+    "先修再建：现有「DELETE 事件不同步（realtime filter 在 DELETE 上失效）」「loadMembership 取最早工作区」「Android new Notification 报错被吞」三个 bug 不修，动态流会出现「对方删了帖我这还在」「@ 了她手机不弹」，用户会立刻回退到微信。这三项必须排在 posts 之前",
+    "双轨风险：微信不会消失。需要 Sara 定两条硬规则并自己先执行——客户反馈当天录入 feedback 帖、交付物只放文件台不发微信；否则系统只剩「又一个要看的地方」",
+    "posts 增长后全量重拉不可持续：现有 store 是任何变化整表重拉，posts 一年可达数千条。posts 必须从第一天起就按「最近 30 天全局 + 打开项目时按项目追加」拉取，realtime 只对 INSERT 做增量 push，不能照抄 tasks 的模式",
+    "系统事件噪音：触发器生成的 system 帖若不折叠，两天就把人写的内容淹没。UI 折叠是必做项，且只记三种事件",
+    "Storage RLS 容易写错：storage.objects 的策略与表 RLS 分开配置，路径解析用 storage.foldername；上线前必须用 Miranda 账号实测「能看能传不能删别人的」",
+    "1GB 很快满：小红书素材、设计稿动辄几十 MB；靠图片压缩 + 链接优先 + 配额条三件套控制，且要在 README 写明「视频和 PSD 不进文件台」",
+    "Supabase 免费版 7 天无活动会暂停，pg_cron 周摘要和定时提醒一起停：加一个 GitHub Actions 每 3 天 ping 一次 REST 接口的 keepalive 工作流（免费）",
+    "@ 提及仍然只能在应用开着时弹：Web Push 不在本期，需要向 Miranda 明确「把 PWA 装到主屏幕、早上打开一次」，否则「@ 了没反应」会被归咎于产品",
+    "并发覆盖：现有 upsert 整行写回，两人同时改 PRD 会互相覆盖；posts 是追加型没有这个问题，但 clients.notes 和 PRD 一样有，clients 保存改为字段级 update",
+    "权限口径变化要写进 README：本方案让所有成员都能在任何项目发帖/上传，这与现在「未分配只读」的描述不一致，需 Sara 拍板确认",
+    "客户对象一旦建了就要维护：11 个在营客户 + 联系人的初始录入是一次性工作，建议做一个 CSV 导入的 seed 脚本，否则客户页会长期空着",
+    "范围膨胀：客户页、周报导出、weekly_digest 都是「有了流之后顺手能做」的东西，建议分三期——一期 posts + composer + @ + 项目动态 + 文件台基础上传；二期 clients + 反馈转任务 + 任务讨论；三期 周报导出 + weekly_digest + 数据帖模板"
+   ]
+  },
+  {
+   "angle": "执行流水线（Jira 式，但比 Jira 轻十倍）：把「平行线」从\"任务清单\"升级为 marketing 交付的状态流——每个交付物从需求→制作→待验收→发布→复盘走一条固定的短流水线，周为节拍，两人之间只有\"指派\"和\"验收\"两种交接。不做 Jira 的 epic/sprint/story point/自定义工作流，用 4 个状态 + 3 张新表 + 若干新字段闭环。",
+   "one_liner": "给两人 marketing 小公司的交付流水线：客户 → campaign → 交付物（任务+附件）→ 渠道 → 周复盘，每一步在同一个 PWA 里闭环，文件跟着客户和项目走。",
+   "marketing_fit": "这条链在现有代码上的落法（以在营客户为例）：\n1. 客户：新增 clients 表（Zeekr Sydney、Bora、Pelucci…），Sara 的内部产品线（Jarvis Solar CRM、SE Lab）client_id 为空，仍走 product lane，不受影响。\n2. Campaign：现有 projects 就是 campaign/retainer，只加 client_id、channels（['SEO','SEM','小红书','网站','Meta','EDM']）、cadence（once/monthly）、links（Semrush/GA/Google Ads/小红书后台等看板链接，jsonb）。运营线阶段模板按 marketing 常见形态扩成 4 套：SEO 月度（关键词→内容→技术→月报）、小红书内容（选题→制作→发布→数据）、投放 campaign（brief→素材→上线→优化→复盘）、建站/改版（需求→设计→开发→验收→上线），新建项目时选。\n3. 交付物：tasks 加 kind（内容/投放/SEO/网站/报告/其他）、channel、routine_id，status 从 todo/doing/done 扩到 todo/doing/review/done。\"待验收\"是唯一新增的交接点：Miranda 把博客/笔记/月报拖到「待验收」→自动给 Sara 发一条关联任务的提醒 → Sara 在看板上点「通过」进 done，或「打回」（填一句原因，写进 reminders 发回 Miranda，任务回到 doing）。所有来往都以 reminders(task_id) 形式留在任务时间线里，不新增评论表。附件（docx/PDF/图片/视频链接）挂在任务上，就是交付物本身。\n4. 渠道：channel 只是一个标签维度，但看板/本周/复盘都能按渠道筛，项目页的「链接」区让 Miranda 一键跳 Semrush/Ads 后台看数。\n5. 数据复盘：两层。日常层——routines 加 mode='task'，pg_cron 每天到点直接生成一条可勾选任务「看今天的 SEO/SEM」给 Miranda（进入今天/今天完成/花园小花），漏做当天可见，月底能算打卡率；周层——「本周」页周五一键「生成周复盘」，按项目汇总本周完成/顺延/待验收清单，写入 project_logs（body Markdown + metrics jsonb，如 {top10关键词:12, 点击:340, 笔记曝光:5600}），Sara 顺手填几个数字，就是给客户的周报/月报底稿。\n这样 Miranda 每天打开只看「今天」：例行打卡 + 到期交付物 + 被打回的；Sara 每天只看「待验收」和「客户」页的红点；周五两人看同一张周复盘。",
+   "objects": [
+    {
+     "name": "Client（客户）",
+     "purpose": "marketing 公司的第一层组织单位，文件台和项目列表都按它分组；内部产品线不建客户。",
+     "fields": [
+      "id uuid",
+      "workspace_id uuid",
+      "name text",
+      "industry text（汽车/宠物/健康/本地服务…）",
+      "contact text（联系人一行）",
+      "links jsonb [{label,url}]（客户官网、共享盘）",
+      "note text（Markdown，客户背景与约定）",
+      "archived boolean",
+      "created_by / created_at"
+     ],
+     "relations": [
+      "1 : N Project（project.client_id，可空）",
+      "1 : N File（file.client_id）",
+      "RLS：同 projects，成员可读，owner 建删，被分配任一该客户项目的成员可改 note/links"
+     ]
+    },
+    {
+     "name": "Project（campaign / retainer / 内部产品线）— 现有表扩展",
+     "purpose": "交付的容器；运营线的项目就是一个 campaign 或月费 retainer，产品线的项目保持现状。",
+     "fields": [
+      "现有：name/type(product|ops)/goal/stages jsonb/prd/archived",
+      "+ client_id uuid null",
+      "+ channels text[]（SEO/SEM/小红书/网站/Meta/EDM/其他）",
+      "+ cadence text（once|monthly）",
+      "+ links jsonb [{label,url}]（Semrush/GA/Google Ads/小红书后台）",
+      "+ template text（记录用了哪套阶段模板，仅展示）"
+     ],
+     "relations": [
+      "N : 1 Client",
+      "1 : N Task",
+      "1 : N File",
+      "1 : N ProjectLog",
+      "1 : N Routine（routine.project_id，用于生成任务时归属）",
+      "阶段模板扩展在 src/lib/util.ts STAGE_TPL/PRD_TPL 增加 4 套 marketing 模板"
+     ]
+    },
+    {
+     "name": "Task（工作项 / 交付物）— 现有表扩展",
+     "purpose": "流水线的最小单元；交付物类任务带附件和验收，例行任务由 routine 生成。",
+     "fields": [
+      "现有：title/due/status/priority/note/assignee_id/created_by/done_at",
+      "status check 扩为 todo|doing|review|done",
+      "+ kind text（content|ads|seo|web|report|other，默认 other）",
+      "+ channel text null",
+      "+ routine_id uuid null（例行任务标记，用于分组与打卡率）",
+      "+ needs_review boolean 默认 false（kind 为 content/report 时新建默认 true）",
+      "+ reviewed_by uuid null、reviewed_at timestamptz null"
+     ],
+     "relations": [
+      "N : 1 Project（可空 = 个人任务）",
+      "1 : N File（file.task_id，即附件/交付物）",
+      "1 : N Reminder（reminder.task_id，作为任务时间线：指派/提交验收/打回/催办）",
+      "N : 1 Routine（生成来源）",
+      "验收人 = task.created_by ≠ assignee 时取 created_by，否则取工作区里的另一个人"
+     ]
+    },
+    {
+     "name": "Routine（定时规则）— 现有表扩展",
+     "purpose": "承载 Miranda 每天看 SEO/SEM 这类例行：从只发消息升级为可生成可勾选任务。",
+     "fields": [
+      "现有：to_user/message/hour/minute/weekdays/tz/active/last_fired",
+      "+ mode text（reminder|task，默认 reminder）",
+      "+ project_id uuid null",
+      "+ task_tpl jsonb {title, kind, channel, priority}"
+     ],
+     "relations": [
+      "run_routines() 在 mode='task' 时 insert tasks(title=task_tpl.title, project_id, assignee_id=to_user, due=local_now::date, routine_id=r.id, created_by=r.created_by)，仍回写 last_fired",
+      "routine 生成的任务在看板完成列默认隐藏、在今天页单独分组「例行」"
+     ]
+    },
+    {
+     "name": "Reminder（提醒 / 任务时间线）— 现有表，语义扩展",
+     "purpose": "两人之间所有交接消息：指派、提交验收、打回、催办、定时提醒；带 task_id 的在任务弹窗里按时间线展示。",
+     "fields": [
+      "现有：to_user/from_user/message/task_id/remind_at/read",
+      "+ kind text（assign|review_request|reject|approve|nudge|routine|manual，默认 manual）"
+     ],
+     "relations": [
+      "N : 1 Task",
+      "收件箱按 kind 分组并支持批量已读；routine 类同一天只保留一条"
+     ]
+    },
+    {
+     "name": "File（文件台条目）",
+     "purpose": "客户资料、brief、素材、交付物、报告、合同的索引；真实字节在 Supabase Storage，或只是一条外链。",
+     "fields": [
+      "id uuid",
+      "workspace_id uuid",
+      "client_id uuid null",
+      "project_id uuid null",
+      "task_id uuid null",
+      "name text",
+      "kind text（brief|asset|deliverable|report|contract|other）",
+      "storage_path text null（为空即外链）",
+      "url text null（Google Drive/Canva/Figma/飞书链接）",
+      "size bigint、mime text",
+      "version int 默认 1（同名重传 +1）",
+      "created_by / created_at"
+     ],
+     "relations": [
+      "N : 1 Client / Project / Task（三者可空，至少一个非空或为工作区级）",
+      "Storage 对象路径 = ws/{workspace_id}/{client_id|_internal}/{project_id|_}/{file_id}-{name}",
+      "RLS：读=is_ws_member；写=can_edit_project(project_id) 或 owner；storage.objects 策略按路径第二段 workspace_id 校验"
+     ]
+    },
+    {
+     "name": "ProjectLog（周复盘 / 阶段复盘）",
+     "purpose": "闭环的最后一步：把一周或一个阶段的产出与数据固化，成为客户周报/月报的底稿。",
+     "fields": [
+      "id uuid",
+      "workspace_id uuid",
+      "project_id uuid",
+      "kind text（weekly|retro）",
+      "week_start date（weekly 用）",
+      "body text（Markdown，自动生成完成/顺延/待验收清单，可手改）",
+      "metrics jsonb（自由键值：{\"top10关键词\":12,\"点击\":340}）",
+      "created_by / created_at / updated_at"
+     ],
+     "relations": [
+      "N : 1 Project",
+      "生成来源 = 本周页「生成周复盘」按 tasks(done_at 在本周 / due 在本周未完成 / status=review) 汇总",
+      "RLS 同 tasks：项目可编辑者可写"
+     ]
+    }
+   ],
+   "screens": [
+    {
+     "name": "今天（现有页升级）",
+     "job": "Miranda 早上一眼看到今天必须做的：例行打卡、到期交付物、被打回的；Sara 看到待自己验收的。",
+     "key_ui": [
+      "新增分组「例行」（routine_id 非空、due=今天）置顶，勾完即打卡，进「今天完成」和花园小花",
+      "新增分组「待我验收」（status=review 且验收人是我），行内「通过 / 打回」按钮",
+      "「被打回」高亮：最近一条 kind=reject 的提醒未读的任务加红色 tag",
+      "快速添加的项目下拉改为 canEdit 过滤（修现有 bug），并加 kind 下拉（默认其他）",
+      "项目卡改为按客户分组的小卡（客户名 + campaign 名 + 当前阶段 + 待验收数）"
+     ]
+    },
+    {
+     "name": "本周（现有页升级为周节拍）",
+     "job": "周一排本周、周五收本周：看容量、顺延、生成周复盘。",
+     "key_ui": [
+      "顶部计数条：本周计划 N / 已完成 N / 待验收 N / 逾期 N，按人切换",
+      "周一按钮「把逾期的挪到本周」：批量把 due<今天 且未完成的任务 due 改为本周一（仅自己可编辑的）",
+      "周五按钮「生成周复盘」：弹窗列本周有活动的项目，勾选后为每个项目创建 project_logs(weekly)，body 自动填完成/顺延/待验收清单",
+      "卡片上加 kind/channel 小标签；手机端每张卡加「移到…」按钮（+1 天 / 下周同日 / 未排期）替代拖拽",
+      "筛选 chips：全部 / 我的 / 按客户"
+     ]
+    },
+    {
+     "name": "看板（现有页升级为流水线）",
+     "job": "两人共同的流水线视图：交付物在哪一格、谁卡住了。",
+     "key_ui": [
+      "四列：待办 / 进行中 / 待验收 / 完成；拖入「待验收」自动发 review_request 提醒给验收人",
+      "待验收列卡片上有「通过」「打回」，打回弹一行输入原因（写成 reject 提醒，任务回 doing）",
+      "完成列默认只显示最近 14 天且非例行任务，列头「显示全部」",
+      "筛选：客户 / 项目 / 渠道 / 负责人 / kind，筛选状态存 localStorage",
+      "卡片显示附件数（📎 2）与 kind/channel 标签"
+     ]
+    },
+    {
+     "name": "客户（新页，替换顶部导航「项目」的入口位置，项目页降为客户页内的 lane 视图）",
+     "job": "Sara 按客户看全局：每个客户在营的 campaign、下一个截止、待验收数、文件夹。",
+     "key_ui": [
+      "客户卡列表：名称 / 行业 / 在营项目数 / 最近一次周复盘日期 / 待验收数红点；「内部」卡收纳产品线项目",
+      "客户详情：顶部 links 按钮组（官网/共享盘），三个区块：项目列表（可新建 campaign，选阶段模板）、文件夹（该客户全部 File，按项目分组）、客户备注（Markdown）",
+      "owner 可新建/归档客户；member 可改备注与链接",
+      "保留现有「项目」lane 视图作为客户页里的一个切换（产品线/运营线），代码复用 Projects.tsx"
+     ]
+    },
+    {
+     "name": "项目详情（现有页升级，分 tab）",
+     "job": "一个 campaign 的工作台：PRD/brief、任务、文件、链接、复盘都在一屏内切换。",
+     "key_ui": [
+      "tab：概览（阶段 Stepper + 链接按钮组 + 本周复盘摘要）/ PRD（现有编辑器）/ 任务（现有列表 + kind/channel 筛选）/ 文件（该项目 File 列表，拖拽上传、加外链）/ 复盘（project_logs 列表，点开可编辑 body 与 metrics 键值表）",
+      "头部加客户名、channels 标签、cadence 标记（月费 retainer 显示「本月第 N 周」）",
+      "「编辑阶段」新增「换模板」：从 4 套 marketing 模板重置阶段（保留已完成状态）",
+      "协作者勾选保持现状；member 若被勾选可在该项目下新建 routine（例行任务）"
+     ]
+    },
+    {
+     "name": "任务弹窗（现有 TaskDialog 升级）",
+     "job": "一个交付物的全部：字段、附件、时间线、验收操作。",
+     "key_ui": [
+      "新增字段：kind、channel、needs_review 开关",
+      "附件区：文件列表（点击取 signed URL 下载/预览图片）、上传按钮、「加链接」按钮；上传写 File(task_id, project_id, client_id 自动继承)",
+      "时间线：该任务的 reminders 按时间排列（指派/提交验收/打回/催办），最后一条打回原因高亮",
+      "底部操作按需显示：负责人看到「提交验收」；验收人看到「通过」「打回」；任何人看到「提醒负责人」（复用 ReminderDialog preset）",
+      "项目下拉在负责人无权时 disabled 并显示当前项目（修现有 bug）；删除加 confirm"
+     ]
+    },
+    {
+     "name": "文件（新页，顶部导航加入；手机端底部 tab 用「更多」收纳文件/成员）",
+     "job": "全局文件台：不记得在哪个项目里也能按客户/类型/时间找到；看用量。",
+     "key_ui": [
+      "筛选栏：客户 / 项目 / kind / 上传人 / 关键字（前端过滤 name）",
+      "列表：名称、kind 标签、所属客户›项目›任务面包屑、大小、上传人、时间、版本号；点击下载（signed URL 60 分钟），图片行内预览",
+      "上传区：拖拽或选择，先选归属（客户/项目/任务任一），单文件 >50MB 提示改用外链",
+      "顶部用量条：已用 / 1GB，>800MB 变黄并提示清理；「外链」不占用量",
+      "同名重传：提示「替换为 v{n+1}」，旧对象删除只保留元数据行（省空间）"
+     ]
+    },
+    {
+     "name": "提醒（现有页小改）",
+     "job": "收件箱不被例行提醒淹没，验收类消息能直接跳任务。",
+     "key_ui": [
+      "按 kind 分组：待验收请求 / 打回 / 指派 / 例行 / 其他",
+      "「全部标已读」「清除 7 天前已读」两个批量按钮",
+      "关联任务可点击打开 TaskDialog",
+      "定时规则表单加「生成为任务」开关 + 归属项目 + kind；列表可编辑（不用删了重建）"
+     ]
+    }
+   ],
+   "keep_light": [
+    "不做 sprint/epic/story point/燃尽图：周就是节拍，本周页承担 sprint 全部职责",
+    "不做自定义工作流与自定义字段：状态固定 4 个，kind/channel 固定枚举，改枚举就是改一个 TS 常量 + check 约束",
+    "不做评论系统：任务时间线复用 reminders(task_id, kind)，不新增评论表、不做 @提及、不做富文本",
+    "不做子任务/依赖/甘特图：交付物拆分靠多条任务 + 同一项目，阶段计划已是粗粒度里程碑",
+    "不做多工作区、客户门户、客户登录：客户永远只是一条记录，不是用户",
+    "不做文件缩略图/在线预览 Office/版本 diff：图片用 signed URL 直接 img，其他文件下载；大视频只允许外链",
+    "不做全文搜索：文件与任务搜索都是前端内存过滤（数据量两人可控）",
+    "不做时间记录/工时/计费：金额和合同只作为 File(kind=contract) 存档，不进数据模型",
+    "不做自动化规则引擎：唯一的自动化是 routine 生成任务和状态变更触发提醒，两处硬编码",
+    "不做通知渠道扩展（Web Push/邮件/飞书）纳入本轮：先把状态流做闭环，推送作为独立决策",
+    "不做 owner 之外的角色扩展：仍是 owner/member + 按项目勾选，客户与文件权限沿用同一套函数",
+    "不重写数据层：继续全量拉取 + realtime 整表重拉，只把 upsert 整行改成字段级 update（并发覆盖问题的前置修复）"
+   ],
+   "reuse": [
+    "/Users/sara/Projects/parallel/src/state/store.tsx：StoreProvider 的 loadAll + realtime refetch 模式直接扩展，加 clients/files/project_logs 三张表的 state 与订阅（顺手把 routines 加进订阅列表）；canEdit/canEditTask 原样用于 File/ProjectLog 的前端权限镜像",
+    "/Users/sara/Projects/parallel/supabase/schema.sql：is_ws_member / is_ws_owner / can_edit_project 三个 security definer 函数直接用于 clients/files/project_logs 的 RLS 和 storage.objects 策略；tasks 的 status check 约束改一行加 'review'",
+    "/Users/sara/Projects/parallel/supabase/routines.sql：run_routines() 只加一个 if r.mode='task' 分支 insert tasks，pg_cron 调度不动；routines 表 alter 加 mode/project_id/task_tpl",
+    "/Users/sara/Projects/parallel/src/views/Board.tsx：COLS 数组加 ['review','待验收']，move() 里在 to==='review' 时调 sendReminder(kind=review_request)；筛选 chips 从 all/product/ops 扩为客户/渠道下拉",
+    "/Users/sara/Projects/parallel/src/views/Week.tsx：列结构与拖拽逻辑不变，只在头部加计数条和两个批量按钮；wcard 加「移到…」按钮解决触屏问题",
+    "/Users/sara/Projects/parallel/src/views/Today.tsx：分组函数模式（Sec 组件）直接加「例行」「待我验收」两组；quick 表单改 canEdit 过滤",
+    "/Users/sara/Projects/parallel/src/components/Dialogs.tsx：TaskDialog 加字段与附件区、ProjectDialog 加 client_id/channels/cadence/模板选择；ReminderDialog 的 preset(task) 已支持，直接接「提醒负责人」按钮",
+    "/Users/sara/Projects/parallel/src/components/Routines.tsx：表单加「生成为任务」开关和项目下拉，upsertRoutine 已是 upsert 整行可直接带新字段",
+    "/Users/sara/Projects/parallel/src/lib/util.ts：STAGE_TPL / PRD_TPL 扩成按模板名索引的 4 套 marketing 模板 + 现有 2 套；defaultStages(tpl) 签名改一下",
+    "/Users/sara/Projects/parallel/src/views/Projects.tsx：lane 视图整体搬进客户详情作为一个切换，项目卡组件复用",
+    "/Users/sara/Projects/parallel/src/views/Inbox.tsx + Members.tsx：收件箱分组与批量按钮是纯前端改动；Members 的权限矩阵不动",
+    "/Users/sara/Projects/parallel/src/components/Tags.tsx：加 KindTag/ChannelTag 两个小组件，样式沿用 .tag",
+    "/Users/sara/Projects/parallel/src/components/Garden.tsx：不改，每个 campaign 一株植物天然成立；routine 打卡任务的 done_at 自动成为小花",
+    "/Users/sara/Projects/parallel/src/App.tsx：hash 路由加 clients / c/:id / files 三个分支；手机底部 tab 改为 今天/本周/看板/客户/提醒/更多",
+    "/Users/sara/Projects/parallel/.github/workflows/deploy.yml 与 PWA 配置不动；新增 supabase/migrations/ 目录存放本轮 SQL（001_clients、002_task_pipeline、003_files、004_routine_task、005_project_logs），README 记录执行顺序"
+   ],
+   "file_hub": "存储：Supabase Storage 建一个私有 bucket `files`（免费版 1GB，单文件上限 50MB）。对象路径固定为 ws/{workspace_id}/{client_id 或 _internal}/{project_id 或 _}/{file_id}-{原文件名}，路径即目录结构，不需要额外 folder 表。\n索引：public.files 表存元数据（见 objects），storage_path 为空的行是外链（Google Drive / Canva / Figma / 飞书文档 / Semrush 报告），外链不占用量，大视频与原始素材一律走外链。\n组织：三层挂载——客户级（合同、品牌资料、brief）、项目级（campaign 素材、月报）、任务级（该交付物的 docx/PDF/图片）。上传时只需选一个归属，client_id/project_id 自动向上继承（任务→项目→客户）。kind 枚举：brief / asset / deliverable / report / contract / other。任务被拖到「待验收」时若 kind=content/report 且无附件，弹提示「还没有附件，确定提交？」。\n版本：同一 task/project 下同名重传 → 询问「替换为 v{n+1}」，新对象覆盖旧对象（同一 storage_path 用 upsert: true），files 行 version+1、size/mime 更新；不保留历史字节，省 1GB 额度。\n权限：files 表 RLS——select: is_ws_member(workspace_id)；insert/update/delete: is_ws_owner(workspace_id) or (project_id is not null and can_edit_project(project_id)) or (project_id is null and created_by=auth.uid())。storage.objects 策略——select: bucket_id='files' and is_ws_member((storage.foldername(name))[2]::uuid)；insert/update/delete: 同上加 owner 或 can_edit_project((storage.foldername(name))[4]::uuid)（第 4 段为 '_' 时只允许 owner）。前端用 createSignedUrl(path, 3600) 下载，图片直接 img 预览；不开公开 bucket。\n分享：给客户看的交付物不走 Storage 直链（签名链接 1 小时过期不适合外发），而是复制一份到共享盘再作为外链挂回来，或由 Sara 下载后走邮件/飞书；文件台只服务两人内部。\n用量：files 页顶部用量条 = sum(size)，>800MB 黄色警告并提供「按大小排序」清理入口；每次上传前前端检查 size≤50MB。\n删除：删文件行时前端先 storage.remove([path]) 再 delete 行；项目删除级联删 files 行，但 Storage 对象需前端遍历删除（或接受残留、在 files 页提供「清理孤儿对象」按钮，仅 owner）。\n上传实现：supabase.storage.from('files').upload(path, file, {upsert}) 直接从浏览器上传，不经 Edge Function；进度用 XHR 事件（supabase-js v2 不带进度，先做无进度的 spinner，>10MB 再考虑 tus 分片）。",
+   "risks": [
+    "status 加 'review' 是破坏性变更：check 约束、Board 列、Today/Week 的 open 过滤（status!=='done'）、看板拖拽、TaskDialog 下拉都要同步改；建议一次 PR 内完成并先在本地 Supabase 项目验证迁移",
+    "现有 upsertTask/upsertProject 是整行 last-writer-wins，加了附件/验收/时间线后并发写更频繁（Sara 验收、Miranda 同时改备注），必须先把状态/PRD/stages 改为字段级 update，否则打回与通过可能互相覆盖",
+    "routine 生成任务依赖 pg_cron，Supabase 免费项目 7 天无活动会暂停：两人周末不开也不会到 7 天，但长假会让例行任务停发；需要在 README 写明或加 GitHub Actions 每 5 天 ping 一次 REST 保活",
+    "1GB 存储对 marketing 素材偏小：一个视频 campaign 就能吃掉一半；产品上用外链兜底，但需要 Miranda 养成大文件走共享盘的习惯，否则用量条很快变红",
+    "storage.objects 的路径解析策略（storage.foldername）写错会导致全部上传被拒或越权；需要在 SQL Editor 用两个账号各测一次上传/下载/删除",
+    "验收流程对两人团队可能显得多余：默认只对 kind=content/report 开启 needs_review，其余任务 doing→done 直达，避免 Miranda 觉得每件事都要等 Sara 点头",
+    "Miranda 现在不能新建项目（owner 独占），而她是运营线实际负责人；若不放开「member 可在运营线新建 campaign」，客户页的新建入口对她是灰的，流水线第一步就卡在 Sara 手里",
+    "数据层全量拉取在加了 files/project_logs 后仍然可用（两人量级），但 reminders 因为验收/打回/例行会增长更快，收件箱必须带批量已读和 7 天折叠，否则未读角标失真",
+    "Realtime 的 DELETE 事件因 filter 不投递（maps 里的高危项）在文件台上更明显：一方删文件另一方仍看到条目并点击 404；本轮要一并加 replica identity full 或去 filter",
+    "schema 仍靠手工在 SQL Editor 粘贴，本轮涉及 5 个迁移文件，前端先上线而库没改会直接白屏；至少在 README 建执行顺序清单，最好把 supabase/migrations 纳入 deploy.yml",
+    "范围蔓延：客户备注、项目链接、复盘 Markdown 三处都很容易长成 Notion；要守住「一个 Markdown 字段，不做块编辑器」的边界，把知识库诉求留给另一条构想"
+   ]
+  },
+  {
+   "angle": "文件台（Asset Hub）：把「平行线」从\"任务+PRD\"扩成 marketing 公司的工作台，核心补的是\"客户 → campaign → 交付物文件 → 渠道 → 复盘报告\"这条链上缺失的两个对象：客户（clients）和文件（assets/asset_versions）。文件不是独立网盘，而是挂在客户/项目/任务上的交付物，带版本、审批状态、对外分享链接；存储用 Supabase Storage 私有桶 + storage RLS，1GB 额度靠\"图片客户端压缩 + 大视频只存外链 + 版本上限\"撑住。现有 Supabase 权限基元、store 全量拉取+realtime、Modal/Dialog、hash 路由、提醒系统全部沿用；新增 3 张业务表、1 个桶、2 个路由、1 个顶栏入口，分三期落地，第一期不需要 Edge Function。",
+   "one_liner": "两个人的 marketing 工作台：客户和 campaign 下面挂着提案、报告、设计稿和素材，每个文件有版本、有审批、能一键发给客户，任务和 PRD 里随手就能引用。",
+   "marketing_fit": "这条链在现有代码里只有中间一段（project=campaign、task=执行动作），两头缺：没有\"客户\"这个对象，交付物只能塞进 PRD Markdown 或散在飞书/微信里；复盘也没有落点。构想里的落法：\n1) 客户：新增 clients 表（名称、服务组合 SEO/SEM/小红书/品牌出海/本地服务、联系人、数据看板链接、状态）。projects 加 client_id（可空，Jarvis Solar CRM、SE Lab 这类内部产品线不挂客户）。Miranda 每天\"看 SEO/SEM\"的定时提醒消息里直接带 #c/<客户id>，点开客户页第一行就是 Semrush / GA / Google Ads 链接，提醒从\"一条消息\"变成\"可点的工作入口\"。\n2) campaign：沿用 projects（ops lane），加 channels text[]（seo/sem/xhs/brand_au/local），项目卡显示客户名和渠道 chip；Projects 页运营线可按客户折叠。\n3) 交付物：assets 表，kind 区分提案/报价/月报/设计稿/图片/视频/文案/客户资料/合同，status 走 草稿→待审→定稿→已发客户 四步，与现有 Stepper 视觉一致。上传即挂到客户/项目/任务三者中的任意组合。Miranda 上传后点\"请求审核\"，走现有 reminders 发给 Sara（reminders 加 asset_id 列），Sara 在提醒页点开即审，标\"定稿\"或写一行修改意见退回。\n4) 渠道：assets.channel 和 projects.channels 同一套枚举，文件台可按渠道筛（例如看所有小红书素材）。\n5) 数据复盘：kind=report 的文件带 period（YYYY-MM），客户页有\"报告时间线\"按月排列；用现有 routines 给 Miranda 建\"每月 1 号上传上月 SEO 月报\"的定时提醒即可，不做数据抓取。复盘结论仍写在项目 PRD（Markdown）里，用 [月报 2026-08](#f/<id>) 链接指向文件。",
+   "objects": [
+    {
+     "name": "clients（客户）",
+     "purpose": "客户档案，是文件台和 campaign 的顶层分组；不是 CRM，只放找文件和干活时要看的信息",
+     "fields": [
+      "id uuid",
+      "workspace_id uuid",
+      "name text（如 Bora / Lee Massage / Empire Zeekr）",
+      "services text[]（seo|sem|xhs|brand_au|local|web）",
+      "status text（lead|active|paused|ended，默认 active）",
+      "contacts jsonb（[{name, role, email, phone}]）",
+      "links jsonb（[{label, url}]：Semrush 项目、GA、Google Ads、小红书号、客户网站）",
+      "note text",
+      "created_by uuid",
+      "created_at / updated_at"
+     ],
+     "relations": [
+      "1 客户 → N projects（projects.client_id 可空）",
+      "1 客户 → N assets（assets.client_id）",
+      "RLS：工作区成员可读、可建、可改；只有 owner 可删（复用 is_ws_member / is_ws_owner）"
+     ]
+    },
+    {
+     "name": "projects（现有，扩为 campaign）",
+     "purpose": "现有项目表不动结构语义，加两列让运营线项目能挂客户和渠道",
+     "fields": [
+      "+ client_id uuid null references clients on delete set null",
+      "+ channels text[] default '{}'（seo|sem|xhs|brand_au|local）",
+      "其余字段不变（name/type/goal/stages/prd/archived）"
+     ],
+     "relations": [
+      "N projects → 1 client",
+      "1 project → N assets（assets.project_id）",
+      "PRD Markdown 内用 [名称](#f/<asset_id>) 引用文件（renderMd 不需改，hash 链接天然可点）"
+     ]
+    },
+    {
+     "name": "assets（文件/交付物，逻辑对象）",
+     "purpose": "一个'文件'的身份卡：叫什么、属于谁、什么类型、审批到哪一步；具体字节在 asset_versions",
+     "fields": [
+      "id uuid",
+      "workspace_id uuid",
+      "client_id uuid null",
+      "project_id uuid null（on delete set null，项目删了文件保留）",
+      "task_id uuid null（on delete set null）",
+      "name text",
+      "kind text（proposal|quote|report|design|image|video|copy|client_doc|contract|other）",
+      "channel text null（同 projects.channels 枚举）",
+      "period text null（YYYY-MM，仅 report 用）",
+      "status text（draft|review|final|sent，默认 draft）",
+      "tags text[] default '{}'",
+      "note text",
+      "external_url text null（>50MB 视频、Figma、Canva、飞书文档直接存链接，不占 Storage）",
+      "current_version int default 1",
+      "reviewed_by uuid null / reviewed_at timestamptz null / review_note text（最近一次审核意见）",
+      "created_by uuid",
+      "created_at / updated_at"
+     ],
+     "relations": [
+      "1 asset → N asset_versions",
+      "1 asset → N shares",
+      "reminders.asset_id → assets（新增列，用于'请求审核'和'已定稿'通知）",
+      "RLS：成员可读/可建（created_by=自己）；改：owner 或 created_by 或 can_edit_project(project_id)；删：owner 或 created_by"
+     ]
+    },
+    {
+     "name": "asset_versions（文件版本，物理对象）",
+     "purpose": "每次上传一行；版本列表、回看旧版、算存储用量都靠它",
+     "fields": [
+      "id uuid",
+      "asset_id uuid references assets on delete cascade",
+      "version int（asset 内唯一）",
+      "storage_path text null（external_url 型文件为 null）",
+      "thumb_path text null（图片/PDF 首页客户端生成的 320px webp）",
+      "size bigint",
+      "mime text",
+      "original_name text",
+      "note text（版本说明：'改了报价' '客户要求换配色'）",
+      "uploaded_by uuid",
+      "created_at"
+     ],
+     "relations": [
+      "N versions → 1 asset；unique(asset_id, version)",
+      "storage.objects 路径 = {workspace_id}/{asset_id}/v{version}-{safe_name}，桶 assets（私有）",
+      "RLS：成员可读；插入需 uploaded_by=自己且对 asset 有改权；删除 owner 或 uploaded_by"
+     ]
+    },
+    {
+     "name": "shares（对外分享链接）",
+     "purpose": "给客户看/下载某个文件的链接，可设有效期、可撤销、能看被打开几次；第二期做",
+     "fields": [
+      "id uuid（即 token，出现在 URL #s/<id>）",
+      "asset_id uuid",
+      "version_id uuid null（null=始终最新版）",
+      "expires_at timestamptz null",
+      "revoked boolean default false",
+      "views int default 0",
+      "created_by uuid",
+      "created_at"
+     ],
+     "relations": [
+      "N shares → 1 asset",
+      "由 Edge Function share 解析：查表→校验→createSignedUrl(3600s)→返回 {name,mime,size,url}；前端 #s/<token> 落地页无需登录",
+      "RLS：工作区成员可读/建/改（revoke）；匿名访问只走 Edge Function（service role），表本身对 anon 不开"
+     ]
+    },
+    {
+     "name": "storage bucket assets（Supabase Storage）",
+     "purpose": "唯一的私有桶，file_size_limit 50MB（免费版上限），路径首段是 workspace_id 用于 RLS",
+     "fields": [
+      "storage.objects RLS select/insert/update/delete：bucket_id='assets' and is_ws_member((storage.foldername(name))[1]::uuid)",
+      "delete 额外要求 owner 或 objects.owner = auth.uid()",
+      "用量 = sum(asset_versions.size)，前端算，超过 800MB 顶栏黄条提示"
+     ],
+     "relations": [
+      "asset_versions.storage_path / thumb_path 指向此桶"
+     ]
+    }
+   ],
+   "screens": [
+    {
+     "name": "文件台（#files，顶栏第 5 个入口，放在'提醒'前）",
+     "job": "找文件、传文件、看还剩多少空间；按客户/项目/类型/渠道/状态一步筛到",
+     "key_ui": [
+      "左栏（≤640px 变顶部横向 chips）：全部 / 内部 / 每个客户一行（名字 + 文件数）+『+ 客户』按钮（复用 chips/lane 样式）",
+      "工具条：搜索框（name/tags/original_name）、kind 下拉、status 下拉、channel chips、『只看我传的』开关、视图切换 列表/缩略图网格",
+      "上传按钮 + 整页拖放区：选文件后弹 UploadDialog（名称默认取文件名、kind 自动猜 mime、客户/项目/任务三个下拉、渠道、版本说明、『压缩图片』默认开）；一次可多选，逐个进度条",
+      "文件行：缩略图/类型图标、名称 + v{n}、status 小标签（复用 .tag 四色）、客户 tag、项目 tag、大小、上传人、时间；点击进 #f/:id",
+      "底部存储条：已用 xxx MB / 1024 MB，超 80% 变黄并提示『大视频请存链接』",
+      "空状态：『把提案、报告、设计稿拖进来，或先建一个客户』"
+     ]
+    },
+    {
+     "name": "客户页（#c/:id）",
+     "job": "Miranda 每天/每周打开一个客户时的工作首页：看板链接、正在跑的 campaign、这个客户的文件和报告时间线",
+     "key_ui": [
+      "头部：客户名（contentEditable，同 ProjectDetail 标题）、services chips、status、联系人（姓名/角色/邮箱可点 mailto）",
+      "『数据看板』一行：links 里的每条渲染成按钮（Semrush / GA / Google Ads / 小红书），任何成员可编辑；这是定时提醒 #c/<id> 落地的目标",
+      "campaign 面板：该客户下未归档 projects 列表（复用 pcard thin + Stepper mini）；owner 可在此『+ 新建 campaign』（ProjectDialog 预填 client_id、type=ops）",
+      "文件面板：复用文件台列表组件，固定 client_id 筛选，带小上传按钮",
+      "报告时间线：kind=report 的文件按 period 倒序，一月一格，缺月显示灰格『未上传』，方便看谁漏了月报",
+      "备注（Markdown textarea，复用 PRD 800ms 自动保存写法）"
+     ]
+    },
+    {
+     "name": "文件详情（#f/:id）",
+     "job": "看这个文件长什么样、走到哪一步、谁改过什么、把它发给客户或塞进任务/PRD",
+     "key_ui": [
+      "左：预览区。图片直接 <img src=signedUrl>；PDF 用 <iframe src=signedUrl>；video/audio 用原生标签；其他类型显示图标 + 『下载』；external_url 型显示『在外部打开』",
+      "右上：状态 Stepper 草稿→待审→定稿→已发客户（复用 Stepper 组件，传伪 stages）；按钮随状态变：『请求审核』（sendReminder 给另一人，reminders.asset_id=本文件，消息含 #f/<id>）、『标为定稿』/『退回修改』（写 review_note，退回同时发提醒给 created_by）、『标为已发客户』",
+      "版本列表：v3（当前）… v1，每行 上传人 · 时间 · 大小 · 版本说明 · 『下载』 · 『设为当前』；『上传新版本』按钮（只传字节和说明，其他元数据沿用）",
+      "归属编辑：客户 / 项目 / 任务 三个下拉可改；渠道、tags、note 行内编辑；名称 contentEditable",
+      "分享：第一期『复制 7 天链接』『复制 30 天链接』（createSignedUrl，toast 提示不可撤销）；第二期换成 shares 表：列出已生成链接、有效期、打开次数、『撤销』",
+      "『复制 PRD 引用』：把 [名称 v{n}](#f/<id>) 写进剪贴板；『复制图片 Markdown』（仅图片，写 ![名称](signedUrl) 供临时粘贴）",
+      "删除（owner 或上传者）：confirm 后删 assets 行（级联版本）并调用 storage.remove 清理所有 path"
+     ]
+    },
+    {
+     "name": "项目页文件面板（ProjectDetail 右栏新增 panel）",
+     "job": "在 campaign 里直接看到这个项目的交付物并上传，不用跳到文件台",
+     "key_ui": [
+      "panel 标题『文件』+ 计数 + 『上传』小按钮（UploadDialog 预填 project_id、client_id）",
+      "列表最多显示 8 条（status 标签 + 名称 v{n} + 时间），『查看全部』跳 #files?project=<id>",
+      "panel 内接受拖放",
+      "PRD 编辑区工具条加『插入文件链接』：弹出本项目文件选择器，插入 [名称](#f/<id>)"
+     ]
+    },
+    {
+     "name": "任务弹窗附件区（TaskDialog 新增一段）",
+     "job": "'把提案改完' 这种任务，附件就是产出物；完成任务时顺手把文件传上来",
+     "key_ui": [
+      "『附件』一行：已关联文件以 chip 显示（点开 #f/:id），chip 上的 × 只解除 task_id 不删文件",
+      "『上传』（UploadDialog 预填 task_id / project_id / client_id）和『选择已有』（按项目过滤的下拉）",
+      "新建任务时先禁用附件区，提示『保存后可加附件』（避免先传后建的孤儿）",
+      "TaskRow 有附件时在 .m 区加一个回形针小标 + 数量"
+     ]
+    },
+    {
+     "name": "对外分享落地页（#s/:token，第二期）",
+     "job": "客户点链接就能看/下载，不用登录，不暴露 Supabase 路径；Sara 能撤销、能知道客户打开过没有",
+     "key_ui": [
+      "App.tsx 路由在 ready/user 判断之前拦截 #s/，不要求登录",
+      "调用 Edge Function GET /share?t=<token>：返回 {name, mime, size, url(1h 签名), note} 或 410（已失效）",
+      "页面：公司名 + 文件名 + 版本说明 + 预览（图片/PDF）+ 下载按钮；失效时显示『链接已失效，请联系发送人』",
+      "不做评论、不做客户登录、不做多文件打包"
+     ]
+    },
+    {
+     "name": "Projects 页与 Today 页的小改动",
+     "job": "让客户维度在原有页面也可见，不新增页面",
+     "key_ui": [
+      "Projects 运营线 pcard 加客户名 tag 和 channels chips；运营线支持『按客户分组』开关（localStorage 记住）",
+      "ProjectDialog 加『客户』下拉（ops 类型显示，product 隐藏）和渠道多选 chips",
+      "Inbox 提醒行：消息内的 #f/… #c/… #p/… 渲染成链接；有 asset_id 的提醒显示文件名 chip",
+      "Today 不加任何东西"
+     ]
+    }
+   ],
+   "keep_light": [
+    "不做任意层级文件夹树：组织维度固定为 客户 × 项目 × 类型 × 渠道 × tag，够 marketing 公司找文件，省掉拖拽移动、面包屑、空文件夹一整套",
+    "不做在线编辑/协同编辑（Office、Figma、Canva 都以 external_url 挂链接），文件台只管'定稿的字节'",
+    "不做文件级评论线程：审核意见只有 review_note 一行 + 走现有提醒；要讨论去飞书",
+    "不做文件级权限：工作区两人全可见，只区分'谁能删'（owner/上传者）；project_members 的编辑权只用于决定能否改归属到该项目的文件",
+    "不做回收站/恢复：删除 confirm 后硬删并清 storage；误删靠版本里的旧文件重新上传",
+    "不做 >50MB 上传（免费版上限）：视频、原始素材包、大 PSD 一律 external_url（Google Drive / 飞书 / YouTube 不公开）；界面在选文件时直接提示",
+    "不做图片变换/CDN（免费版没有 Image Transformations）：缩略图在浏览器 canvas 生成一次存成 webp，够列表用",
+    "不做全文检索（PDF 内容、OCR、AI 打标）：只搜名称、原文件名、tags",
+    "不做客户门户/客户登录/多文件打包下载：分享只是单文件链接",
+    "不做与 Google Drive / 飞书云空间的双向同步或导入器",
+    "不做数据抓取（Semrush/GA/Ads 数据入库）：客户页只放看板链接，复盘结论写 PRD",
+    "不做审批流配置：状态固定四步，两个人不需要流程引擎",
+    "不做多工作区/多客户账号隔离：仍是一个工作区",
+    "第一期不做 Edge Function：分享用 createSignedUrl 直出链接，接受不可撤销；第二期再加 shares 表和 share 函数",
+    "不改现有 tasks/reminders/routines 语义，只给 reminders 加一列 asset_id、projects 加两列"
+   ],
+   "reuse": [
+    "权限基元 is_ws_member / is_ws_owner / can_edit_project（/Users/sara/Projects/parallel/supabase/schema.sql:92-111）直接用于 clients / assets / asset_versions / shares 和 storage.objects 的 RLS，不用写新函数",
+    "schema.sql 的 'create table if not exists + drop policy/create policy + alter publication' 写法，新表照抄成 supabase/assets.sql（在 routines.sql 之后执行，README 部署步骤加一行）",
+    "store.tsx 的 loadAll Promise.all 全量拉取 + realtime '任何事件整表重拉' 模式（/Users/sara/Projects/parallel/src/state/store.tsx:75-123）：State 加 clients/assets/assetVersions 三个数组，订阅列表加 'clients'/'assets'/'asset_versions'，refetch 加三个分支；顺手把已知的 routines 未订阅一起补上",
+    "store 的 upsert 整行 + 用返回行修补本地状态 + toast('保存失败：') 模式，复制成 upsertClient / upsertAsset / addAssetVersion / deleteAsset",
+    "sendReminder(to, message, taskId, remindAt)（store.tsx:188-194）：加一个可选 assetId 参数即成'请求审核'/'退回修改'的通知通道；ReminderDialog 的 preset 机制已支持预填",
+    "routines + run_routines()（supabase/routines.sql）：'每天看 SEO/SEM' 和 '每月 1 号传月报' 都是现成的定时提醒，只需消息里写 #c/<id>；Inbox 把 hash 链接渲染成 <a> 即可",
+    "Modal 组件（src/components/Modal.tsx）和 Dialogs.tsx 里的表单结构（.f / .f2 / .acts / hint）：UploadDialog、ClientDialog 直接套",
+    "Stepper（src/components/Stepper.tsx）：文件状态四步复用 mini 模式，传 [{name:'草稿',done},{name:'待审',done}…] 伪 stages",
+    "Tags.tsx 的 .tag.product/.ops/.who/.due 四套配色：kind/status/channel 标签只加 CSS class 不加组件",
+    "Projects.tsx 的 lane/pcard/thin 与 ProjectDetail 的 panel/hd/bd/two/detail 栅格（src/styles.css）：文件台左栏+列表、客户页三个面板都能拼出来，不用新布局系统",
+    "ProjectDetail 的 contentEditable 标题重命名 + PRD 800ms 防抖自动保存写法：客户名、文件名、客户备注照抄",
+    "App.tsx 的 hash 路由 parse()（src/App.tsx:14）：加 'files'、'c/'、'f/'、's/' 四个前缀分支；顶栏 nav 数组加 ['files','文件','▤']，底部 tabbar 自动带上",
+    "TaskDialog（src/components/Dialogs.tsx:8-61）：在备注下面插一段附件区，editable 判断沿用 canEditTask",
+    "TaskRow 的 .m 标签区：加回形针计数标",
+    "util.ts 的 todayStr/fmtTime/fmtDue：版本时间、报告 period 展示直接用；新增 fmtSize(bytes) 一个函数",
+    "ProjectDialog：加客户下拉和渠道 chips；新建时 obj 多带 client_id / channels 两个字段，upsertProject 不用改",
+    "supabase-js 已在依赖里，storage.from('assets').upload / createSignedUrl / remove 不需要新包；缩略图和图片压缩用浏览器 canvas，不加依赖",
+    "deploy.yml 不动；第二期 Edge Function 只需本地 supabase functions deploy share 一次，不进流水线"
+   ],
+   "file_hub": "**存储**：一个私有桶 `assets`（Dashboard 建桶或 SQL insert into storage.buckets），file_size_limit=52428800（免费版硬上限 50MB），允许所有 mime。路径固定 `{workspace_id}/{asset_id}/v{n}-{safe_name}`，缩略图 `{workspace_id}/{asset_id}/v{n}-thumb.webp`。storage.objects 四条策略都是 `bucket_id='assets' and is_ws_member((storage.foldername(name))[1]::uuid)`，delete 再加 `and (owner = auth.uid() or is_ws_owner(...))`。上传顺序：先 storage.upload（失败就停）→ 再 insert assets（新文件时）→ insert asset_versions → update assets.current_version；任一 DB 步骤失败则 storage.remove 回滚。删除顺序反过来：先 list `{ws}/{asset_id}/` 全删，再 delete assets 行。\n\n**1GB 额度怎么撑**：(1) 图片上传前浏览器 canvas 压到最长边 2000px、webp q=0.82（设计稿预览够用），UploadDialog 有『保留原图』开关；(2) 视频和 >50MB 的东西不进桶，走 external_url（选文件时超限直接弹提示改为贴链接）；(3) 每个 asset 默认最多保留 5 个版本，第 6 版上传时提示『将删除 v1 的文件（保留记录）』，asset_versions 行保留 storage_path 置 null；(4) 顶栏/文件台底部用量条，>80% 黄、>95% 红并禁止上传非 external；(5) 缩略图 320px webp 让列表不拉原图，控制每月 5GB 出站流量；(6) signedUrl 在内存 Map 缓存 50 分钟，同一会话不重复签。按经验：提案/报告 PDF 1-5MB、压缩后图片 200-500KB，1GB 大约装 400 份 PDF + 1000 张图，两个人一年够用；不够的升级路径写在 risks。\n\n**组织**：没有文件夹。每个文件三个可空归属（client_id / project_id / task_id）+ kind + channel + tags + period。文件台左栏按客户，列表可按项目/类型/渠道/状态/上传人筛，搜索匹配 name + original_name + tags。'内部'= client_id 为空（Jarvis Solar CRM、SE Lab 的产品文档、公司模板）。\n\n**版本**：assets（逻辑）+ asset_versions（物理）。『上传新版本』只要字节和一句版本说明；列表默认显示当前版本，详情页展开历史；『设为当前』可回滚到旧版（不删任何字节）。分享链接默认跟随当前版本。\n\n**审批**：assets.status 四步 draft→review→final→sent，与两人分工对齐：Miranda 上传（draft）→『请求审核』（status=review，reminders 插一条 asset_id=本文件给 Sara）→ Sara『标为定稿』（final，reviewed_by/at 写入，回一条提醒）或『退回修改』（回到 draft，review_note 必填，回一条提醒）→ 发给客户后任一人『标为已发客户』（sent）。没有配置项、没有多级审批。\n\n**分享**：第一期 = 详情页『复制 7 天 / 30 天链接』，调用 `storage.createSignedUrl(path, 7*86400)`，toast 明说『此链接到期前无法撤销』。第二期 = shares 表 + Edge Function `share`（约 60 行 Deno：读 token → 检查 revoked/expires_at → views+1 → service role createSignedUrl 3600s → 返回 JSON）+ 前端 `#s/<token>` 落地页（不登录，在 App 的 user 判断之前渲染）。这样得到撤销、有效期、打开次数、品牌化页面，且真实路径不暴露。\n\n**权限**：读 = 工作区成员全部可见；建文件 = 任何成员（Miranda 必须能传交付物）；改元数据/传新版本 = owner、created_by、或 can_edit_project(project_id)；删 = owner 或 created_by。与现有 project_members 逻辑一致，前端 canEditAsset(a) 镜像即可。\n\n**与任务/文档互链**：任务 ↔ 文件靠 assets.task_id（TaskDialog 附件区、TaskRow 回形针）；项目 ↔ 文件靠 project_id（ProjectDetail 文件面板）；PRD ↔ 文件靠 Markdown 链接 `[提案 v2](#f/<id>)`（详情页一键复制，marked 渲染出来就是站内跳转）；提醒 ↔ 文件靠 reminders.asset_id（Inbox 显示文件 chip）；定时提醒 ↔ 客户靠消息里的 `#c/<id>`。\n\n**分期（可直接拆任务）**：\n一期（打通存取，约 6 个任务）：① supabase/assets.sql：clients / assets / asset_versions 三表 + projects 加列 + reminders 加列 + storage 桶策略 + publication；② store：types、State、loadAll、realtime、upsertClient/upsertAsset/addAssetVersion/setCurrentVersion/deleteAsset/canEditAsset、signedUrl 缓存、usage；③ lib/upload.ts：压缩、缩略图、上传+回滚；④ 文件台页 + UploadDialog + ClientDialog；⑤ 文件详情页（预览、版本、状态、7/30 天链接、复制 PRD 引用）；⑥ App 路由与顶栏、README 部署步骤。\n二期（嵌进现有页面，约 4 个任务）：⑦ 客户页；⑧ ProjectDetail 文件面板 + PRD 插入链接 + ProjectDialog 客户/渠道；⑨ TaskDialog 附件区 + TaskRow 标记；⑩ Inbox 链接渲染 + asset chip、请求审核/退回/定稿三个动作。\n三期（对外，约 3 个任务）：⑪ shares 表 + Edge Function share；⑫ #s/<token> 落地页；⑬ 详情页分享管理（列表/撤销/次数）+ 版本上限清理 + 孤儿对象清理按钮（owner）。",
+   "risks": [
+    "1GB 是硬天花板：设计稿密集的客户（品牌出海）几个月就能把桶塞满。缓解已写在 file_hub；再不够的两条路：Supabase Pro US$25/月（100GB）或把桶换成 Cloudflare R2（10GB 免费，但签名 URL 必须经 Edge Function/Worker，一期的 createSignedUrl 直出方案要重写）。建议一期就把 storage 调用收口在 lib/upload.ts 和 store 两处，方便日后换后端。",
+    "免费版 5GB/月出站流量：反复预览大 PDF、给客户的分享链接被多次下载都算流量。缩略图和 signedUrl 缓存能压一部分，但没法控制客户下载次数；超限 Supabase 会限流而不是扣费，届时分享链接打不开。要在详情页显示文件大小并提醒大文件走外链。",
+    "Supabase 免费项目 7 天无活动会暂停：暂停期间发给客户的分享链接全部失效，比内部提醒停发更尴尬。需要一个保活（GitHub Actions 每 5 天 curl 一次 REST）或接受偶发失效。",
+    "storage RLS 写错 = 文件对陌生账号可见：现在站点开放注册，storage.objects 的策略必须以路径首段 workspace_id 做 is_ws_member 判断，上线前用第三个测试账号验证读不到；并且 Sara 应尽快关闭 Allow new users to sign up（数据层 maps 里已提的高危项）。",
+    "一期签名链接不可撤销：发错文件给客户只能等 7 天过期。界面必须明说；确实需要撤销就提前做三期的 shares + Edge Function。",
+    "上传是多步操作（storage → assets → versions → current_version），没有事务：网络中断会留下孤儿对象或孤儿行。缓解：严格按顺序 + 失败回滚；三期加 owner 的『清理孤儿』按钮（list 桶下所有 path 与 asset_versions 对比）。",
+    "删除文件不会自动删 storage 对象（数据库触发器碰不到 Storage）：前端必须先 remove 再 delete 行；若前端删行成功但 remove 失败，字节会一直占额度。同样靠孤儿清理兜底。",
+    "浏览器端图片压缩会改变设计稿的字节：给客户打样、印刷用的原图不能压。UploadDialog 默认压缩但要有明显的『保留原图』开关，kind=design 时默认不压。",
+    "手机（尤其 iOS Safari PWA）上传大文件和多文件体验不稳定，后台切走会中断；一期只承诺电脑端上传，手机端保证浏览、预览、审核、分享。",
+    "assets 表加入 realtime 后沿用现有『整表重拉』：文件数上千前无感，但 DELETE 事件在 filter 下不会投递（数据层 maps 已指出），需要 replica identity full 或去 filter，否则一人删文件另一人列表不更新。",
+    "client_id 引入后 Projects/Today 语义变复杂：内部产品线项目没有客户，运营项目大多有客户，界面要保证 client_id 为空时一切照旧，不要让 product lane 出现客户下拉。",
+    "版本上限（5 个）删除旧字节的规则要和 Sara 确认：提案类文件可能确实需要回看 v1 报价，可以按 kind 设不同上限（proposal/quote/contract 不清理）。",
+    "reminders 加 asset_id、projects 加 client_id/channels 属于线上库手工迁移，README 里没有线上库版本记录（PWA 维度 maps 已提）；前端先上线、库没改会直接报列不存在，需要按 assets.sql → 部署前端的顺序做，并在 README 记一行。"
+   ]
+  }
+ ],
+ "scores": [
+  {
+   "scores": [
+    {
+     "angle": "文档中枢（Notion 式）：以客户为根的轻量工作台，文档永远挂在客户/项目上",
+     "marketing_fit": 9,
+     "lightness": 7,
+     "feasibility": 8,
+     "value": 9,
+     "total": 33,
+     "best_ideas": [
+      "「客户」作为根对象 + 客户页顶部一排链接 chips（官网/GA/GSC/Semrush/Ads/小红书）：这就是 Miranda 每天巡检的入口，定时提醒消息带 #c/:id 直接落地，把现有 routines 从「一条消息」变成「可点的工作入口」，零新概念",
+      "文档只能挂靠（客户/项目/工作区 SOP 三选一），没有页面树、没有文件夹：这是四个方案里唯一从结构上防止「空洞 wiki」的设计，也最符合 marketing 公司实际产出（brief/SOP/纪要/周报/提案）",
+      "「记一笔」运营日志（客户页单行输入回车追加带日期一行）+ 周报骨架由 done 任务和日志自动拼：Miranda 看完 SEO/SEM 有落笔处，Sara 周五少写半小时",
+      "会议纪要/brief 里 `- [ ]` 行一键转任务并回写 (task:短id)：把「文档」和现有执行层真正接起来，tasks.doc_id 回链成本极低",
+      "一个 FilesPanel 组件带 {clientId?, projectId?, docId?, taskId?} props 复用到客户页/项目页/文档页/文件台：文件台方案里最省代码的做法，且外链与上传件同表同列",
+      "docs 一开始就用字段级 update({body}).eq('id') + 「记一笔」走服务端 rpc append_log：已核实现有 upsertProject 是整行写回（store.tsx:143），这是防两人互相覆盖的正确前置修复",
+      "第一步先做 seed SQL/CSV 把 11 个在营客户+渠道+链接灌进去再上线界面：founder 视角最关键的一条，空客户页等于没上线"
+     ],
+     "worst_ideas": [
+      "导航从 6 项变 8 项（新增「客户」「文档」两个主导航）：手机 tabbar 已经满（App.tsx nav 6 项），建议砍掉独立的「文档中心」，全局搜索 ⌘K + 置顶 SOP 放进客户/项目页即可",
+      "第一期就把 projects.prd 迁到 docs（kind='prd'）并双写：不必要的破坏性动作，prd 列保留、MdEditor 抽出来先给 docs 用，PRD 以后再迁",
+      "一键「生成本周周报」放在第一期：依赖日志被认真填写，方案自己也承认要先跑两周日志习惯；第一期不做",
+      "服务端 docs.body ilike 全文搜索：两人数据量本地 title 匹配够用，先不做",
+      "「今天」页顶部「今天要看的客户」chips：和客户列表的「未巡检」灰色提示重复，二选一"
+     ]
+    },
+    {
+     "angle": "执行流水线（Jira 式但轻十倍）：交付物走 需求→制作→待验收→发布→复盘 的固定短流水线",
+     "marketing_fit": 7,
+     "lightness": 6,
+     "feasibility": 7,
+     "value": 7,
+     "total": 27,
+     "best_ideas": [
+      "routines 加 mode='task'，pg_cron 到点直接生成一条可勾选任务「看今天的 SEO/SEM」：已核实 run_routines() 是 security definer 且只需加一个 if 分支（routines.sql:31-48），直接回答了 maps 里的开放问题（打卡率可回看、进花园小花），成本最低价值最高，建议移植到冠军方案",
+      "运营线阶段模板扩成 4 套 marketing 模板（SEO 月度/小红书内容/投放 campaign/建站改版）：只改 util.ts 的 STAGE_TPL/PRD_TPL，新建项目时选，很符合 marketing 公司习惯",
+      "本周页「把逾期的挪到本周」批量按钮 + 周五计数条：周节拍对小公司真实有用，纯前端改动",
+      "needs_review 只对 kind=content/report 默认开启：方案自己意识到两人团队验收流程容易多余，这个收口是对的",
+      "收件箱按 kind 分组 + 「全部已读」「清除 7 天前已读」：reminders 增长后必需，纯前端"
+     ],
+     "worst_ideas": [
+      "status 加 'review' 第四列 + 通过/打回走 reminders：已核实 check 约束（schema.sql:64）、Board COLS、Today/Week 的 open 过滤、TaskDialog 下拉全要同步改，是破坏性变更；两个人坐在一起，「打回」填原因再发提醒比微信说一句还慢，很可能没人走这个流程",
+      "project_logs 单独建表存周复盘：本质就是一篇 Markdown 文档，没必要新表，用文档对象 kind=weekly 即可",
+      "tasks 加 kind/channel/routine_id/needs_review/reviewed_by/reviewed_at 六列：任务对象膨胀，Miranda 建任务要多填两个下拉",
+      "文件路径 ws/{ws}/{client|_internal}/{project|_}/{id}-{name} 四段 + storage RLS 按第 4 段判 can_edit_project：路径语义太多，RLS 容易写错，客户/项目变更时对象不能移动",
+      "同名重传直接 upsert 覆盖旧对象只保留 version 号：既没有真正的版本又多了一个概念"
+     ]
+    },
+    {
+     "angle": "沟通流（Slack 式）：挂在对象上的动态流，可 @、可转任务、可附文件",
+     "marketing_fit": 6,
+     "lightness": 4,
+     "feasibility": 5,
+     "value": 6,
+     "total": 21,
+     "best_ideas": [
+      "客户反馈 kind='feedback' 帖（来源+原话+标签）右上角「转任务」并回链 source_post_id：「客户上周说的那件事」有据可查，是 marketing 公司真实痛点，值得作为一种文档/日志类型移植",
+      "项目页「导出本周」把本周帖子+完成任务+新交付物拼成 Markdown 复制到剪贴板：给客户周报的底稿，比一键生成文档更轻",
+      "系统事件折叠成一行「今天：完成 3 项 · 新增 2 个文件」：如果做活动流，这是必须的降噪",
+      "「先修再建」：明确指出 DELETE 不同步、loadMembership 取最早工作区、Android Notification 三个 bug 必须先修（已核实 store.tsx:67、:110、:116 三处确实如此）"
+     ],
+     "worst_ideas": [
+      "posts 作为核心对象并替换底部 tab「提醒」：两人公司最不可能每天用的就是内部动态流——微信不会消失，这条方案自己也承认是「双轨风险」；对 founder 来说这是最大的「做了没人用」风险",
+      "触发器自动生成 system 帖（任务完成/阶段完成/文件上传）：两天就淹没人写的内容，为了降噪又要做折叠，属于自己制造问题再解决",
+      "@提及 mentions uuid[]、acked_by「收到」、parent_id 一层回复：三个 Slack 概念叠加，对两个人来说是纯重量",
+      "posts 要「最近 30 天 + 按项目追加」的分页拉取和增量 realtime：已核实现有 store 是全量拉取+整表重拉（store.tsx:73-123），这是数据层模式的根本改变，工作量和风险最大",
+      "routines 扩 weekly_digest 模式用 SQL 聚合生成周摘要帖：pg_cron 在免费版 7 天暂停后一起停，且周摘要看一眼就过，价值低"
+     ]
+    },
+    {
+     "angle": "文件台（Asset Hub）：客户→campaign→交付物文件（带版本/审批/对外分享）",
+     "marketing_fit": 8,
+     "lightness": 6,
+     "feasibility": 8,
+     "value": 8,
+     "total": 30,
+     "best_ideas": [
+      "Storage 对象路径 {workspace_id}/{asset_id}/v{n}-{safe_name}，storage.objects 四条策略统一用 is_ws_member((storage.foldername(name))[1]::uuid)：已核实三个 security definer 函数存在（schema.sql:92-111）可直接复用，是四个方案里 storage RLS 最简洁、最不容易写错的写法",
+      "上传顺序 storage.upload → insert 行 → 失败 remove 回滚，删除反向；signedUrl 内存缓存 50 分钟；文件详情页显示大小：工程细节最扎实，1GB 与 5GB 出站流量两条约束都想到了",
+      "图片上传前 canvas 压缩但 UploadDialog 有「保留原图」开关、kind=design 默认不压：marketing 公司给客户打样的原图不能被压，这个细节只有这个方案想到",
+      "客户页「报告时间线」按 period 倒序一月一格，缺月灰格「未上传」：一眼看出哪个客户漏了月报，非常 marketing",
+      "PRD Markdown 内 [提案 v2](#f/<id>) 引用文件：已核实 renderMd 只转义 `<`，marked 渲染 hash 链接天然站内可点，零成本互链",
+      "分三期且每期可直接拆任务：一期不需要 Edge Function，Sara 拍板即可开工"
+     ],
+     "worst_ideas": [
+      "assets + asset_versions 两张表 + 每个 asset 保留 5 版：版本字节直接吃 1GB，方案自己承认「版本上限要和 Sara 确认」；两人公司「上传新版本覆盖 + 旧版转外链」就够",
+      "shares 表 + Edge Function share + #s/<token> 免登录落地页 + 打开次数：给客户发文件用微信/邮件发 7 天签名链接就行，对外门户是第三期也不该做的东西",
+      "文件状态四步 draft→review→final→sent + 请求审核/退回/定稿三个动作：把文件当工单，同样的验收流程问题（两人不会走）",
+      "缩略图 canvas 生成 320px webp 单独存 thumb_path：多一倍对象、多一条回滚路径，列表用类型图标即可",
+      "kind 枚举 10 个值（proposal/quote/report/design/image/video/copy/client_doc/contract/other）：上传时选不动，会全选 other",
+      "完全没有文档层：只有 PRD 一块 Markdown，Sara「Notion」诉求（brief/SOP/纪要）没有落点，复盘还是写在 PRD 里"
+     ]
+    }
+   ],
+   "winner": "文档中枢（Notion 式）：以客户为根的轻量工作台",
+   "rationale": "站在 marketing 公司创始人的角度，唯一的问题是「两个人明天早上会不会打开它」。四个方案都补了客户和文件台，分野在于第三个对象选什么：文档、验收状态、动态帖、还是文件版本。\n\n冠军选「文档中枢」（33 分），理由：\n1. 它是唯一同时覆盖 Sara 三个原话的方案——Notion（brief/SOP/纪要/提案）、Jira（现有今天/看板/任务不动，纪要待办转任务）、Slack（提醒加 doc_id 替代评论）、文件台（FilesPanel 一个组件四处复用），且每一样都比原型轻。\n2. 它的每日使用闭环是最真实的：Miranda 早上定时提醒 → 点 #c/:id 进客户页 → 一排 Semrush/GA/Ads chips 点完 → 「记一笔」落一行日志；Sara 周五在日志和 done 任务上补结论出周报、写提案时文档就挂在客户下。这条链每一步都对应 marketing 公司现在已经在做的动作，只是把落点从微信/Drive 挪进来。\n3. 可行性我读了代码核实过：三个 security definer 权限函数（schema.sql:92-111）可直接给 clients/docs/files/storage.objects 用；ProjectDetail 的 PRD 编辑器（textarea+marked+800ms 防抖+activeElement 防覆盖，ProjectDetail.tsx:24-33）原样抽成 MdEditor；hash 路由 parse() 只有一行（App.tsx:13）加分支即可；ReminderDialog 已有 preset 参数（Dialogs.tsx:142）；不需要新 npm 包。它对现有数据层模式（全量拉取+整表重拉）的改动最小——只是 docs 列表不拉 body。\n4. 它对现有高危 gap 的处理最对：docs 一开始就字段级 update、记一笔走 rpc append_log、新表 replica identity full，这些都是我在 store.tsx:143/157 和 :110 filter 上核实过的真实问题。\n\n但要砍三样才够轻：不新增「文档」主导航（手机 tabbar 已满 6 项，搜索走 ⌘K，SOP 置顶放客户/项目页）；第一期不迁 projects.prd 到 docs；周报一键生成和 body 全文搜索推迟到日志习惯跑两周之后。\n\n同时建议从其他方案各借一条低成本高价值的东西：从「执行流水线」借 routines mode='task'（run_routines 只加一个 if 分支，Miranda 的每日巡检变成可勾选、可回看打卡率的任务）和 4 套 marketing 阶段模板；从「文件台」借 storage 路径与 RLS 写法、上传回滚顺序、图片压缩的「保留原图」开关、报告时间线缺月灰格；从「沟通流」借「客户反馈」作为一种文档/日志类型并可转任务。\n\n「文件台」方案（30 分）工程最扎实，但把文件当工单（四步审批+版本表+分享 Edge Function）对两人偏重，且完全没有文档层，Sara 的 Notion 诉求落不下。「执行流水线」（27 分）的 review 状态是破坏性变更，两人坐一起不会走打回流程。「沟通流」（21 分）是 founder 最该警惕的：内部动态流永远竞争不过微信，做了大概率成为「又一个要看的地方」，而且它要求先重构数据层拉取模式，工作量与风险最大。"
+  },
+  {
+   "scores": [
+    {
+     "angle": "文档中枢（Notion 式）：以客户为根的文档/文件工作台",
+     "marketing_fit": 8,
+     "lightness": 7,
+     "feasibility": 8,
+     "value": 8,
+     "total": 31,
+     "best_ideas": [
+      "clients 表作为根 + projects.client_id/channels/links：只加三列，product lane 的 client_id 为空即照旧，Projects.tsx/Today.tsx 零改动也能跑",
+      "docs 表只用 Markdown textarea：把 ProjectDetail.tsx 第 24-33 行的 PRD 编辑逻辑（800ms 防抖 + lastSaved + activeElement 防覆盖）原样抽成 MdEditor，是四个方案里最便宜的『Notion』",
+      "客户页顶部链接 chips（官网/GA/GSC/Semrush/Ads/小红书）+ 定时提醒消息带 #c/:id：把现有 routines 从『一条文字』变成可点的工作入口，零后端改动",
+      "『记一笔』走服务端 rpc append_log(doc_id, line) 而不是前端读改写：这是唯一一个从一开始就正视整行 upsert 并发覆盖问题的设计",
+      "docs 列表只 select 元数据、body 进 #d/:id 按需拉：与现有 loadAll 全量模式兼容，几十篇长文档不会拖慢启动",
+      "files 表 upload|link 二合一 + 前端 20MB 限制 + 图片 canvas 转 webp：1GB 免费额度最现实的守法",
+      "文档挂靠约束（sop 可无挂靠，其余 client_id 或 project_id 至少一个）用一条 check 就防住了空洞 wiki"
+     ],
+     "worst_ideas": [
+      "⌘K 全局搜索 Modal 分组五类 + 上下键：两个人四个客户不需要，先用各列表的本地筛选，等数据量起来再做",
+      "『生成本周周报』一键按钮：依赖 done_at 和日志被认真填写，方案自己也承认要先跑两周日志习惯；应从第一期砍到第三期",
+      "导航 6→8 项并重排手机 tabbar 为 5+更多：改动面比看起来大（App.tsx nav 数组同时驱动顶栏和 tabbar），建议客户页并入『项目』入口、文档中心并入项目页，不新增顶级导航",
+      "rpc storage_usage(ws)：files 表已经全量在 store 里，前端 sum(size) 即可，不必新写函数",
+      "会议纪要 `- [ ]` 行一键转任务并回写 (task:短id) 标记：解析/回写 Markdown 的边界情况多（缩进、已勾选、中文标点），收益对两人团队不成比例",
+      "clients.contacts / links 用 jsonb 数组：没有 Dialog 之外的编辑界面，实际会退化成一个文本框；第一期用 note 字段的 Markdown 写联系人即可"
+     ]
+    },
+    {
+     "angle": "执行流水线（Jira 式）：交付物状态流 + 周节拍 + 例行任务",
+     "marketing_fit": 7,
+     "lightness": 6,
+     "feasibility": 7,
+     "value": 7,
+     "total": 27,
+     "best_ideas": [
+      "routines 加 mode='task'：run_routines() 只加一个 if 分支 insert tasks(routine_id=r.id)，security definer 天然绕过 RLS；这是直接回答 maps 里『Miranda 每天看 SEO/SEM 要不要变成可勾选任务』那个开放问题的最小实现，且自动进花园小花",
+      "4 套 marketing 阶段模板（SEO 月度 / 小红书内容 / 投放 campaign / 建站改版）：util.ts 的 STAGE_TPL 改成按模板名索引，defaultStages(tpl) 改一个签名，新建项目时多一个下拉",
+      "本周页『把逾期的挪到本周』批量按钮：纯前端 + 一条 update in()，对两人排期最实用",
+      "Week 卡片加『移到…』按钮：顺手修了 maps 界面维度的高危项（触屏拖拽失效）",
+      "reminders 加 kind 列并按 kind 分组 + 批量已读：修 Inbox 无限堆积的高危 gap，而不是新建评论表"
+     ],
+     "worst_ideas": [
+      "status 加 'review' 是破坏性变更：check 约束、Board COLS、TaskDialog select、Week/Today 过滤都要同步；两人公司的验收更适合做成 needs_review 布尔 + 提醒，不动状态枚举",
+      "storage 路径 ws/{ws}/{client|_internal}/{project|_}/{id}-{name} 并在 storage.objects 策略里解析第 2 段和第 4 段：路径越深策略越脆，一处写错全部上传被拒；用 {ws}/{file_id}-{name} 首段判成员足够，归属靠 files 表列",
+      "打回/通过写成 reminders 时间线：reminders 现在的 r_select 只看收发双方，任务时间线在第三人（未来新成员）视角会缺行；两人可用但语义扭曲",
+      "project_logs.metrics jsonb 自由键值表：没有 UI 约束会变成每周不同的键名，月底无法横向比；固定几个字段或直接写 Markdown",
+      "同名重传 version+1 覆盖旧对象：既不保留历史字节又要维护 version 计数，两头都没占到；要么真保留要么不做版本",
+      "5 个迁移文件 + 建议把 supabase db push 纳入 deploy.yml：需要 access token/db password 进 Secrets，超出本轮范围"
+     ]
+    },
+    {
+     "angle": "沟通流（Slack 式）：挂在对象上的动态流 + 通知中心",
+     "marketing_fit": 6,
+     "lightness": 5,
+     "feasibility": 6,
+     "value": 6,
+     "total": 23,
+     "best_ideas": [
+      "『先修再建』的排序：DELETE 事件不同步、loadMembership 取最早工作区、Android new Notification 报错——这三条是任何方案上线前都该先做的，此方案说得最明确",
+      "feedback 帖『转任务』并用 tasks.source_post_id 回链：客户微信里说的事有据可查，这是 marketing 公司真实痛点",
+      "posts 从第一天就按『最近 30 天 + 按项目追加』拉取、realtime 只对 INSERT 做增量：正确地意识到不能照抄 tasks 的整表重拉模式",
+      "Today 页『自上次打开以来』摘要卡（localStorage 记 last_seen_at）：纯前端，5 秒知道对方做了什么，可以单独移植到冠军方案",
+      "ReminderDialog 的 preset 已支持却没人调用——TaskDialog 加『提醒负责人』按钮是现成的一行接线"
+     ],
+     "worst_ideas": [
+      "动态流本身：两个人天天坐一起/微信随时在，第三个『要看的地方』必然被冷落；方案自己列的『双轨风险』就是致命伤",
+      "触发器生成 system 帖（任务完成/阶段完成/文件上传）：触发器在调用者 RLS 上下文运行，posts 的 insert 策略若要求 author_id=auth.uid() 会拒绝系统行，需要 security definer 触发器或放宽策略，方案没提；且噪音需要额外折叠 UI",
+      "@提及 mentions uuid[] + acked_by uuid[] + parent_id 一层回复：三个『轻量社交』特性叠加就是一个小 Slack，不轻",
+      "weekly_digest 由 pg_cron 用 SQL 聚合写 system 帖：把展示逻辑塞进数据库，改文案要改 SQL 再贴 SQL Editor",
+      "文件 kind=link 也要挂 post_id、files 表五个可空外键：与 posts 双向回链的一致性靠前端维护，删帖删文件都会留孤儿",
+      "把『提醒』tab 整个换成『动态』：Inbox.tsx + Routines.tsx 是 Miranda 当前每天用的入口，替换而非追加会打断已成习惯的路径"
+     ]
+    },
+    {
+     "angle": "文件台（Asset Hub）：带版本、审批、对外分享的交付物中心",
+     "marketing_fit": 7,
+     "lightness": 6,
+     "feasibility": 7,
+     "value": 7,
+     "total": 27,
+     "best_ideas": [
+      "文件上传顺序『先 storage.upload → 再 insert 行，任一 DB 步骤失败则 storage.remove 回滚』和删除反序：四个方案里对无事务多步写描述最严谨",
+      "PRD 里用 [提案 v2](#f/<id>) 引用文件：marked 渲染出的 hash 链接天然是站内跳转，renderMd 一行不改",
+      "客户页『报告时间线』按 period(YYYY-MM) 一月一格、缺月灰格：Sara 一眼看谁漏了月报，配现有 routines『每月 1 号传月报』提醒，零新后端",
+      "external_url 型文件与上传件同表同列表、>50MB 直接提示贴链接：1GB 的正确用法",
+      "signedUrl 内存 Map 缓存 50 分钟 + 320px 缩略图：认真考虑了免费版 5GB/月出站流量，其他方案都没算这笔账",
+      "分三期且第一期不做 Edge Function、分享用 createSignedUrl 直出：范围控制得当"
+     ],
+     "worst_ideas": [
+      "assets + asset_versions 两表 + 『设为当前』回滚 + 每 asset 5 版上限清理：两人公司交付物版本用『替换』+ 一句版本说明就够，双表模型让上传、删除、用量统计全部变复杂",
+      "文件级审批 Stepper 草稿→待审→定稿→已发客户 + reviewed_by/review_note：Miranda 传、Sara 看一眼，一条『请求审核』提醒足矣；四步状态机是给十人团队的",
+      "PDF 首页缩略图『客户端生成』：浏览器 canvas 画不了 PDF，需要 pdf.js（约 1MB，package.json 里没有），是隐藏的新依赖；只做图片缩略图即可",
+      "shares 表 + Edge Function share + #s/<token> 匿名落地页（第三期）：给客户发文件用 7 天 signed URL 或直接微信/邮件发，撤销/打开次数是 SaaS 需求；Edge Function 部署也不在流水线里",
+      "storage.objects 删除策略写 objects.owner = auth.uid()：owner 列已被 Supabase 标记弃用，应为 owner_id = auth.uid()::text（此坑方案 1 同样有）",
+      "没有文档层：SOP、brief、纪要仍只能塞进 projects.prd 一个字段，Sara 要的『Notion』那一半没回应，clients.note 一个字段撑不起"
+     ]
+    }
+   ],
+   "winner": "文档中枢（Notion 式）：以客户为根的文档/文件工作台",
+   "rationale": "从全栈可行性和免费额度看，方案 1 赢在『每一个新对象都是现有代码的一次复制』：clients/docs/files 三张表照抄 schema.sql 的 create table + drop/create policy + alter publication 写法，RLS 全部调用已有的 is_ws_member/is_ws_owner/can_edit_project（schema.sql:92-111）而不新写权限基元；docs 的编辑器就是 ProjectDetail.tsx:24-33 那 10 行 textarea+marked+800ms 防抖抽成组件；store.tsx 的 loadAll Promise.all 和 refetch 分支各加三行；hash 路由 parse() 加两个前缀。没有一处需要改现有枚举或状态机，product lane 的项目在 client_id 为空时行为完全不变，旧数据零迁移压力（prd 列保留作兜底）。它也是唯一一个从设计上就用 rpc append_log 和字段级 update 正视了 store.tsx:143/157 整行 upsert 并发覆盖问题的方案，而其他三个方案在加了第二个长文本字段后都会更频繁地踩到这个坑。\n\n对照 Sara 9/17 的方向——『Notion、Jira、Slack 但不重，符合 marketing 公司习惯，要有文件台』——方案 1 用『客户为根 + 文档必须挂靠 + Markdown 唯一格式』同时回应了 Notion（文档）和文件台，而 Jira 那一半靠现有今天/看板/阶段继续承担；Miranda 每天看 SEO/SEM 的闭环变成『定时提醒带 #c/:id → 客户页链接 chips 一排点完 → 记一笔』，三步都在一页，且不需要任何数据抓取。方案 2 的 review 状态和方案 4 的四步审批、双表版本、Edge Function 分享都是给更大团队的仪式；方案 3 的动态流在两人公司里几乎必然输给微信，而且它对 store 数据模式的改动最大（posts 必须改成窗口化 + 增量 push）。\n\n建议的落地口径：以方案 1 为底，第一期只做 clients + docs（MdEditor 抽取、字段级 update、append_log rpc）+ files（私有桶 `files`，路径 {ws}/{file_id}-{name}，删除策略用 owner_id = auth.uid()::text）+ 客户页/文档页/项目页文件面板，客户页并入现有『项目』导航而不是新增两个顶级入口；借方案 2 的 routines mode='task'（run_routines 加一个 if 分支）让 Miranda 的每日巡检成为可勾选、可回看、进花园的任务；借方案 4 的『先 upload 后 insert、失败 remove 回滚』上传顺序、[名称](#f/id) 引用和 signedUrl 缓存。⌘K 搜索、周报一键生成、纪要转任务全部推到第三期。上线前必须先修 maps 里三个高危项（DELETE 事件不同步 → 新表直接 replica identity full、loadMembership 取最早工作区、Android new Notification 改 showNotification），并写一个 seed 脚本把在营客户和链接一次灌进去，否则客户页空着，两人还是回到微信和 Drive。免费额度上：1GB Storage 靠 20MB 前端限制 + webp 压缩 + 外链兜底，两年内够用；5GB/月出站流量只预览图片和 PDF 不会超；pg_cron、Realtime、RLS 都在免费版内；唯一的运营风险仍是 7 天无活动暂停，建议加一个 GitHub Actions 每 5 天 curl 一次 REST 的保活。"
+  },
+  {
+   "scores": [
+    {
+     "angle": "文档中枢（Notion 式）：以客户为根的文档/文件中枢",
+     "marketing_fit": 9,
+     "lightness": 6,
+     "feasibility": 8,
+     "value": 9,
+     "total": 32,
+     "best_ideas": [
+      "clients 表作为整个信息架构的根，campaign（现有 projects 加 client_id）、docs、files 全部挂在客户或项目下，产品线项目 client_id 为空照旧走 product lane——这是四个构想里唯一把「客户」放在正确层级且不打乱现有 lane 模型的",
+      "客户页顶部的快捷链接 chips（官网/GA/GSC/Semrush/Ads/小红书）+ 定时提醒消息带 #c/:id：把 Miranda「每天看 SEO/SEM」从一条只能标已读的消息变成一个可点的工作入口，改动极小（Inbox 把 hash 渲染成 <a> 即可）",
+      "docs 表用固定 kind 枚举 + 「必须挂靠」check 约束 + 无树形结构，从数据层堵死空洞 wiki；SOP 允许无挂靠但 pinned 置顶，是合理的唯一例外",
+      "「记一笔」运营日志（kind=log，服务端 rpc append_log 追加）：一行输入回车即落笔，是 Miranda 每日巡检的自然落点，也是周报的数据源",
+      "MdEditor 从 ProjectDetail 抽出来共用（我核对了 ProjectDetail.tsx：textarea + marked + 800ms 防抖 + lastSaved/activeElement 防覆盖逻辑确实自包含，可原样抽离），DOC_TPL 沿用 PRD_TPL 模式，零新依赖",
+      "FilesPanel 一个组件带 {clientId?, projectId?, docId?, taskId?} props 复用到四处，文件台全量模式只是它的无过滤态；Storage 路径首段 workspace_id 配 is_ws_member 做 storage.objects RLS，与 schema.sql:92-111 现有基元完全对齐",
+      "纪要里的 `- [ ]` 行一键转任务并回写 (task:短id) 标记、tasks.doc_id 回链——用最少的对象把文档和执行层连起来，没有引入评论/活动流",
+      "risks 里把「先灌数据再上界面」（seed 在营客户/链接）列为第一条，是四个构想里对空洞化风险认识最清醒的"
+     ],
+     "worst_ideas": [
+      "「文档中心 #docs」作为独立主导航并内含「文档｜文件台」两个 seg：导航从 6 项涨到 8 项，手机 tabbar 要改成 5+更多（我核对 App.tsx：nav 数组同时驱动顶栏和 tabbar，styles.css tabbar 每项 min-width 48px，8 项在 375px 宽下放不下）。建议合并为一个「资料」入口，或文件台先只作为客户页/项目页的内嵌面板，不独立成页",
+      "⌘K 全局搜索 Modal 是第一期不需要的：两人、十几个客户、几十篇文档，客户列表页的搜索框加文档 tab 的 kind/客户筛选已经够；留到数据量证明需要再做",
+      "PRD 从 projects.prd 迁到 docs（kind='prd'）的双写期是自找的风险：现有 PRD 编辑链路（upsertProject 整行写）是当前最稳定的部分，第一期完全可以让 PRD 留在 projects.prd，docs 只承载新的 kind，等 MdEditor 抽出后再决定要不要迁",
+      "「生成本周周报」一键按钮排在第一期太早：它依赖 done_at 和日志被认真填写，构想自己也承认「先跑两周日志习惯再放周报按钮」，那就应该直接从第一期拿掉",
+      "reminders 加 doc_id、tasks 加 doc_id、files 挂 task_id 三处回链一起做会让第一期改动面铺得太宽；task 附件与 reminders.doc_id 应放最后",
+      "「今天」页顶部加「今天要看的客户」chips 与客户列表页的「未巡检」灰色提示是同一个信息的两处表达，选一处即可（推荐留在客户列表）"
+     ]
+    },
+    {
+     "angle": "执行流水线（Jira 式，比 Jira 轻十倍）：交付物状态流 + 周节拍",
+     "marketing_fit": 8,
+     "lightness": 6,
+     "feasibility": 8,
+     "value": 7,
+     "total": 29,
+     "best_ideas": [
+      "routines 加 mode='task'：run_routines() 在 security definer 里多一个 insert tasks 分支（我核对 routines.sql:31-48，函数结构简单，加分支约 5 行），Miranda「每天看 SEO/SEM」变成可勾选、可回看漏做、能进花园小花的例行任务——这是对 maps 里「定时提醒堆积收件箱」高危项最直接的解法，成本最低、价值最高，应被任何胜出方案吸收",
+      "运营线阶段模板扩成 4 套 marketing 形态（SEO 月度/小红书内容/投放 campaign/建站改版），STAGE_TPL/PRD_TPL 只需从按 type 索引改成按模板名索引，defaultStages 改签名即可",
+      "project_logs（weekly/retro，body + metrics jsonb）由本周页一键从 tasks 汇总生成，是客户周报/月报底稿的正确落点；比构想 1 的周报文档更结构化（metrics 可累计）",
+      "收件箱按 kind 分组 + 「全部标已读」「清 7 天前已读」两个批量按钮：纯前端改动，直接修 maps 里的高危项",
+      "本周页「把逾期的挪到本周」批量按钮 + 手机端「移到…」按钮替代拖拽：修了 maps 里「Week 触屏拖拽失效」高危项",
+      "把 reminders(task_id, kind) 当任务时间线用而不新建评论表，边界守得好"
+     ],
+     "worst_ideas": [
+      "status 加 'review' + needs_review/reviewed_by/reviewed_at + 通过/打回流程：对两个人的公司是过度设计。Sara 验收 Miranda 的月报，靠「拖到待验收→自动发提醒」的仪式感换来的是 check 约束、Board COLS、Today open 过滤、TaskDialog 下拉、Week 全部同步改（我核对 Board.tsx 的 COLS 与 Today.tsx 的 open 过滤，review 状态的任务在 Today 里若无 due 会消失在所有分组中，需要再加一组）。用 files.status 或一条「请审核」提醒就够",
+      "「客户」页替换顶部「项目」入口、项目 lane 视图降为客户页内的切换：信息架构自相矛盾——Jarvis Solar CRM、SE Lab 这些产品线项目没有客户，却要塞进「客户」tab 下的「内部」卡片，Sara 每天找自己的产品线项目要多点一层。客户和项目应并列，不是父子替代",
+      "tasks 加 kind/channel/routine_id/needs_review/reviewed_by/reviewed_at 六列：任务对象被撑胖，kind 与 channel 两个枚举维度在两人场景下几乎不会被认真填",
+      "Storage 路径四段 ws/{ws}/{client|_internal}/{project|_}/{id}-{name} 并在 storage.objects 策略里按第 4 段解析 can_edit_project：比构想 1 的两段路径更容易写错，且「路径即目录」的收益在不做文件夹树时并不存在",
+      "同名重传直接 upsert 覆盖旧对象、只留元数据行 version+1：省了空间但丢了回看旧版的可能，对提案/报价类文件不合适",
+      "文件台是独立新页但没有客户级/项目级以外的「文档」对象：brief、SOP、会议纪要仍只能塞进 PRD Markdown，与 Sara「当作 Notion」的方向对不上"
+     ]
+    },
+    {
+     "angle": "沟通流（Slack 式）：挂在对象上的动态流",
+     "marketing_fit": 6,
+     "lightness": 4,
+     "feasibility": 6,
+     "value": 6,
+     "total": 22,
+     "best_ideas": [
+      "客户反馈（kind=feedback，来源 wechat/email/call/meeting）30 秒录入 + 「转任务」回链 tasks.source_post_id：「客户上周说的那件事」有据可查，是 marketing 公司真实痛点，值得以更轻的形式（文档 kind=feedback 或任务备注）吸收到胜出方案",
+      "定时提醒到点后「今天」页出现「填今天的 SEO/SEM 数据帖」按钮，点开预填 composer：把提醒和落笔动作绑在一起，思路和构想 1 的「记一笔」一致",
+      "「导出本周」把本周帖子 + 完成任务 + 新交付物拼成 Markdown 复制到剪贴板：不建表不生成文档，是最轻的周报形态",
+      "risks 第一条「先修再建」（Realtime DELETE、loadMembership、Android Notification 三个 bug 排在 posts 之前）判断正确，任何方案都应遵守",
+      "上传/发帖对全员开放、不受 project_members 限制：权限口径对两人公司是合理放宽，并明确要求写进 README"
+     ],
+     "worst_ideas": [
+      "整个前提是「把沟通从微信搬进来」：两人公司、大概率同一办公室、客户沟通仍在微信——系统只能记录不能替代，最可能的结局是 risks 里自己写的「又一个要看的地方」。Sara 说「可以把自己当作 Slack」，但更可能指的是「通知与提醒够用」而非做一条动态流",
+      "posts 表 16 个字段（mentions uuid[]、acked_by uuid[]、parent_id 一层回复、pinned、source、file_ids、edited_at）+ 触发器生成 system 帖 + 折叠 UI：四个构想里数据模型最重，且「系统事件噪音」需要额外 UI 折叠才能不淹没人写的内容",
+      "posts 必须改成「最近 30 天 + 按项目追加」的窗口拉取和 realtime 增量合并：打破了 store.tsx 现有「全量拉取 + 整表重拉」的唯一模式（我核对 store.tsx:75-123，所有表都走同一套），等于给数据层开一条独立分支，维护成本最高",
+      "把底部 tab「提醒」替换成「动态」、成员挪进齿轮、再加「文件」：现有 Inbox 的收发双栏 + Routines 面板要被塞进动态页的侧栏，提醒这条已经在用的链路被降级",
+      "files 的 version + replaces_id 双模式（新版本/替换）、weekly_digest 用 SQL 聚合生成 system 帖、routines 三种 mode：每一处都是「有了流之后顺手能做」，构想自己也建议分三期，说明范围已经失控",
+      "「收到」acked_by 替代微信里的「好的」：为一个两人团队设计社交反馈机制，是典型的把大团队工具形态往下硬套"
+     ]
+    },
+    {
+     "angle": "文件台（Asset Hub）：客户 + 带版本/审批/分享的交付物",
+     "marketing_fit": 8,
+     "lightness": 6,
+     "feasibility": 8,
+     "value": 8,
+     "total": 30,
+     "best_ideas": [
+      "最直接回应 Sara 原话「要有存储文件的功能台」：assets 以 kind（提案/报价/月报/设计稿/素材/合同）+ 三个可空归属（client/project/task）+ channel + period 组织，不做文件夹树，找文件的维度正好是 marketing 公司的心智模型",
+      "kind=report 带 period（YYYY-MM）+ 客户页「报告时间线」按月排格、缺月灰格「未上传」：一眼看出哪个客户漏了月报，是四个构想里最贴合 SEO/SEM 月费客户运营节奏的一个小设计，应被吸收",
+      "四步固定状态 draft→review→final→sent 挂在文件上而不是任务上，「请求审核/退回修改/标为定稿」走现有 reminders 加 asset_id：比构想 2 把 review 塞进 tasks.status 轻得多，且与 Miranda 上传→Sara 审核的真实分工一致",
+      "1GB 额度的撑法写得最具体可执行：canvas 压到 2000px webp、>50MB 强制外链、每 asset 默认 5 版并对 proposal/quote/contract 豁免、缩略图 320px 控出站流量、signedUrl 内存缓存 50 分钟",
+      "PRD 里用 `[提案 v2](#f/<id>)` 引用文件：我核对 ProjectDetail.tsx 的 renderMd 只转义 `<`，marked 渲染的 hash 链接天然是站内跳转，零改动即可用",
+      "分期最清晰：一期 6 个任务打通存取、二期 4 个嵌进现有页、三期 3 个对外分享（Edge Function 只在三期出现），并明确「storage 调用收口在 lib/upload.ts 和 store 两处」方便日后换 R2",
+      "Today 页明确「不加任何东西」，是四个构想里唯一克制到不碰每日工作台的"
+     ],
+     "worst_ideas": [
+      "assets + asset_versions 两表分离、「设为当前」回滚、版本上限清理、缩略图生成：对两人公司的版本需求（大多只是「改了一版报价」）是过重的机制；一张表 + version int + 「上传新版本」覆盖旧对象、只对合同/报价保留历史，就够",
+      "shares 表 + Edge Function share + #s/:token 无登录落地页 + 打开次数统计：为「撤销一条发错的链接」引入 Deno 函数与匿名路由，破坏了「GitHub Pages + SQL Editor 粘贴」的零运维部署形态；7 天签名链接 + 发错就等过期，两人公司完全可接受",
+      "没有「文档」对象：brief、SOP、会议纪要、运营日志仍只能写进项目 PRD 或客户页一个 note 字段，客户级的知识（合同要点、账号信息、SOP）没有落点，与 Sara「当作 Notion」的方向只对上了一半",
+      "顶栏 nav 数组加一项就「底部 tabbar 自动带上」：我核对 App.tsx 与 styles.css，7 项 × min-width 48px 在 375px 手机上已经拥挤，何况客户页还要一个入口（构想把客户列表塞在文件台左栏，手机端变顶部 chips——客户作为一级对象却没有自己的一级入口，IA 上别扭）",
+      "UploadDialog 一次要填名称/kind/客户/项目/任务/渠道/版本说明/压缩开关 8 个字段：上传是高频动作，字段一多 Miranda 就会全部留默认，kind/channel 维度随之失真；应从上下文（客户页/项目页/任务弹窗）自动继承，只留 kind 一个必选",
+      "thumb_path 客户端生成缩略图并单独存储：每张图多一个对象、多一次上传、多一条清理路径，列表用 signedUrl + CSS object-fit 缩放在两人数据量下完全够"
+     ]
+    }
+   ],
+   "winner": "文档中枢（Notion 式）：以客户为根的文档/文件中枢",
+   "rationale": "从信息架构自洽和「够轻」两个维度看，构想 1 胜出，但要按下面的方式裁剪后再动手。\n\n一、为什么是构想 1\n1. 它是唯一把「客户」放在正确层级的方案：客户是根，campaign（现有 projects 加 client_id）、文档、文件全部挂在客户或项目下，产品线项目 client_id 为空照旧走 product lane，今天/本周/看板/提醒四个执行层视图一个不动。构想 2 让「客户」页替换「项目」入口、把产品线塞进「内部」卡片，构想 4 把客户列表塞进文件台左栏，都是 IA 上的别扭之处。\n2. 它同时满足 Sara 的三个比喻里最实在的两个——Notion（客户档案、brief、SOP、纪要、日志，全部 Markdown、固定 kind、必须挂靠、无树）和「文件台」（files 表 + 私有桶 + FilesPanel 一个组件四处复用）；Slack 那一层用现有 reminders 加 doc_id 顺手承接，没有另起一条动态流。\n3. 可行性我逐项核对过：MdEditor 可从 ProjectDetail.tsx 原样抽出；DOC_TPL 沿用 util.ts 的 PRD_TPL 模式；is_ws_member/is_ws_owner/can_edit_project 三个基元（schema.sql:92-111）直接用于新表和 storage.objects 策略；store.tsx 的 loadAll/refetch/upsert 模式照抄三份即可；supabase-js 自带 Storage，零新依赖；hash 路由 parse() 加分支即可。\n4. 它对失败模式的认识最清醒：第一条风险就是「客户数据不灌进去界面就是空的」，要求先做 seed；并明确 docs 一开始就走字段级 update + append_log rpc，避开现有整行 upsert 互相覆盖的老问题。\n\n二、必须裁掉的部分（否则它就不「轻」了）\n- 第一期不做：⌘K 全局搜索、独立的「文档中心 #docs」页、一键生成周报、tasks.doc_id/reminders.doc_id 回链、任务附件。\n- 不迁 PRD：projects.prd 保留为项目主文档，docs 只承载新 kind；MdEditor 抽出后两边共用即可，避免双写期。\n- 导航只加「客户」一项（7 项，手机 tabbar 5+更多）；文件台先作为客户页/项目页的内嵌面板，「文档｜文件」的全量视图放在「客户」页的一个顶层 seg 里，等数据量证明需要再拆页。\n\n三、从其他构想吸收的三个小而值钱的东西\n- 构想 2 的 routines mode='task'：run_routines() 加一个 insert tasks 分支，让 Miranda「每天看 SEO/SEM」变成可勾选、可回看漏做的例行任务，直接解决 maps 里「定时提醒堆积收件箱」的高危项，成本约 5 行 SQL + Routines 表单一个开关。\n- 构想 4 的 files.period（YYYY-MM）+ 客户页「报告时间线」缺月灰格：一眼看出哪个客户漏了月报，比任何看板都贴合月费客户节奏；以及 files 上一个极简 status（draft/final）配合现有 reminders 做「请审核」，不要构想 2 的任务级 review 状态。\n- 构想 3 的「客户反馈来源」思路：不建 posts，用 docs kind=feedback（或纪要）+ `- [ ]` 转任务承接。\n\n四、上线前的先决条件（四个构想的 risks 一致指出，任何方案都逃不掉）\nRealtime DELETE 不投递（新表建表即 replica identity full）、loadMembership 取最早工作区、Android new Notification 报错、storage.objects 策略用第二个账号实测跨工作区读不到、两人注册完关闭 Sign Ups。这些先修，再建 clients/docs/files。\n\n总分：构想 1 = 32，构想 4 = 30，构想 2 = 29，构想 3 = 22。构想 4 与 1 差距最小，本质是「同一根（客户）上文件优先还是文档优先」的取舍；考虑到 Sara 自己每天要写提案/PRD/SOP、Miranda 每天要落日志，文档先行、文件跟进的顺序更符合两人的真实动作。"
+  }
+ ],
+ "blueprint": {
+  "positioning": "「平行线」是一家两人 marketing 小公司的轻量工作台：以「客户」为根，每个客户下面挂 campaign（现有项目）、文档（brief / SOP / 纪要 / 日志 / 复盘 / 提案）和文件台（合同、报价、月报、素材，上传件与外链同列）；今天 / 本周 / 看板 / 提醒继续做执行层，Miranda 的每日 SEO/SEM 巡检变成可勾选的例行任务并在客户页一排链接 chips 上完成、落一行日志，Sara 的提案 / PRD / SOP 就写在客户或项目下。它借 Notion 的「文档挂在对象上」、Jira 的「任务 + 阶段」、Slack 的「提醒即沟通」，但只用 Markdown、固定枚举和三张新表在现有 React + Supabase + GitHub Pages 代码上演进，免费额度内够两个人用两年。",
+  "principles": [
+   "客户为根、文档必须挂靠：所有文档和文件只能从客户页 / 项目页进入，新建时必须选挂靠（客户 / 项目 / 工作区 SOP 三选一，由 check 约束保证），没有页面树、没有文件夹，从结构上防止空洞 wiki 与网盘化。",
+   "轻的判据（每个新功能上线前逐条打勾）：不新增 npm 依赖；一个阶段最多新增 3 张表；整个蓝图只新增 1 个顶级导航（客户）；新表 RLS 只调用现有 is_ws_member / is_ws_owner / can_edit_project 三个基元；不做块编辑器、富文本、自定义工作流、自由标签；Miranda 不需要 Sara 讲解、1 分钟内会用；数据层沿用「全量拉取 + 整表重拉」，唯一例外是 docs.body 按需拉。",
+   "先修再建：Realtime DELETE 不同步、loadMembership 取最早工作区、Android 通知报错、整行 upsert 互相覆盖这四个现有漏洞在建 clients / docs / files 之前先修，否则新对象只会放大旧问题。",
+   "数据先于界面：客户档案、渠道、看板链接用 seed 脚本一次灌进去再上线客户页；日志习惯先跑两周再放周报按钮；空页面等于没上线。",
+   "执行层不动、只加回链：今天 / 本周 / 看板 / 任务的核心交互与 status 枚举不变，新对象通过 client_id / doc_id / file_id 回链接进来；产品线项目 client_id 为空时一切照旧。",
+   "免费额度是硬约束、界面把规则写明：单文件 ≤ 20MB、图片默认压 webp、视频与设计源文件一律外链、用量条 80% 变黄；文件台不是网盘，是「找得到的交付物清单」。"
+  ],
+  "information_architecture": [
+   {
+    "name": "profiles / workspaces / workspace_members / invitations / project_members",
+    "purpose": "现有的工作区、成员、邀请与按项目分权模型，本蓝图不改结构；只修 loadMembership 的工作区选择和注册关闭策略",
+    "fields": [
+     "不变；workspace_members 加 after delete 触发器清理 project_members / routines / tasks.assignee_id（可选，随 E1）"
+    ],
+    "relations": [
+     "三个 security definer 基元 is_ws_member / is_ws_owner / can_edit_project 被所有新表的 RLS 与 storage.objects 策略直接复用"
+    ],
+    "status": "已有"
+   },
+   {
+    "name": "clients",
+    "purpose": "客户档案，整个中枢的根；产品线内部项目（Jarvis Solar CRM、SE Lab）不挂客户",
+    "fields": [
+     "id uuid pk",
+     "workspace_id uuid references workspaces on delete cascade",
+     "name text not null",
+     "industry text",
+     "stage text check in ('lead','active','paused','churned') default 'active'",
+     "channels text[] default '{}'（SEO / SEM / XHS / BRAND_AU / LOCAL / WEB）",
+     "links jsonb default '[]'（[{label,url}]：官网 / GA / GSC / Semrush / Google Ads / 小红书号；ClientDialog 里按行编辑）",
+     "note text（Markdown：联系人、合同要点、账号信息；第一期不做独立 contacts 表单）",
+     "owner_id uuid null（内部负责人）",
+     "archived boolean default false",
+     "created_by uuid、created_at、updated_at（沿用 touch 触发器）",
+     "replica identity full"
+    ],
+    "relations": [
+     "1 客户 → N projects（projects.client_id）",
+     "1 客户 → N docs、N files",
+     "RLS：select / insert / update = is_ws_member(workspace_id)；delete = is_ws_owner(workspace_id)",
+     "加入 supabase_realtime，store 订阅并整表重拉"
+    ],
+    "status": "新增"
+   },
+   {
+    "name": "projects",
+    "purpose": "campaign / 内部产品项目，仍分 product / ops 两条 lane；运营线项目挂客户",
+    "fields": [
+     "+ client_id uuid null references clients on delete set null",
+     "+ channels text[] default '{}'（同 clients 枚举）",
+     "+ links jsonb default '[]'（该 campaign 的投放后台 / 看板链接）",
+     "+ template text null（记录用了哪套阶段模板，仅展示）",
+     "prd text 保留为项目主文档，不迁移",
+     "name / type / goal / stages / archived 不变"
+    ],
+    "relations": [
+     "N → 1 clients",
+     "1 → N docs（docs.project_id）、N files（files.project_id）、N tasks（不变）",
+     "RLS 不变：pr_update 用 can_edit_project；pr_insert 视拍板 D2 放宽为 member 可建 type='ops' 项目",
+     "写操作改为字段级 update({prd}) / update({stages})，不再整行 upsert"
+    ],
+    "status": "改造"
+   },
+   {
+    "name": "docs",
+    "purpose": "所有 Markdown 文档：brief、SOP、会议纪要、运营日志、周报、复盘、提案、客户反馈、备注",
+    "fields": [
+     "id uuid pk",
+     "workspace_id uuid",
+     "title text not null",
+     "kind text check in ('brief','sop','meeting','log','weekly','review','proposal','feedback','note')",
+     "body text default ''（Markdown）",
+     "client_id uuid null references clients on delete cascade",
+     "project_id uuid null references projects on delete set null",
+     "pinned boolean default false（SOP 置顶）",
+     "archived boolean default false",
+     "created_by uuid、updated_by uuid、created_at、updated_at",
+     "check：kind='sop' 或 kind='weekly' 允许无挂靠，其余 client_id 或 project_id 至少一个非空",
+     "unique(client_id, kind) where kind='log'（每客户一篇日志）",
+     "replica identity full"
+    ],
+    "relations": [
+     "N → 1 clients / projects（项目挂客户时前端自动补 client_id）",
+     "1 → N files（files.doc_id，文档附件）",
+     "1 → N tasks（tasks.doc_id，第三期纪要转任务）",
+     "reminders.doc_id（就某篇文档催对方）",
+     "RLS：select = is_ws_member；insert / update = is_ws_member（拍板 D1 若选按项目分权，则有 project_id 时改为 can_edit_project）；delete = created_by = auth.uid() or is_ws_owner",
+     "rpc append_log(doc_id, line)：security definer，服务端把「## 今天日期\\n- line」追加/合并到 body，避免前端读改写并发覆盖",
+     "store 的 loadAll 只 select 元数据（不含 body），进入 #d/:id 时按需拉 body 并字段级 update({body, updated_by})"
+    ],
+    "status": "新增"
+   },
+   {
+    "name": "files（+ Storage 私有桶 files）",
+    "purpose": "文件台元数据：上传件与外链统一一张表，1GB 内的放 Storage，大件用外链",
+    "fields": [
+     "id uuid pk",
+     "workspace_id uuid",
+     "kind text check in ('upload','link')",
+     "name text not null",
+     "path text null（Storage 对象路径 {workspace_id}/{file_id}-{safe_name}，link 为空）",
+     "url text null（外链）",
+     "mime text、size bigint default 0（link 为 0，不占用量）",
+     "category text check in ('contract','brief','asset','deliverable','report','other') default 'other'",
+     "period text null（YYYY-MM，仅 category='report'，驱动客户页报告时间线）",
+     "client_id / project_id / doc_id / task_id uuid null（均可空，on delete set null；上传时按上下文自动继承：任务→项目→客户）",
+     "uploaded_by uuid、created_at",
+     "replica identity full"
+    ],
+    "relations": [
+     "N → 1 clients / projects / docs / tasks",
+     "RLS：select / insert = is_ws_member；delete = uploaded_by = auth.uid() or is_ws_owner；不叠加 can_edit_project（Miranda 必须能传自己负责客户的文件）",
+     "storage.objects：select / insert 要求 bucket_id='files' and is_ws_member((storage.foldername(name))[1]::uuid)；delete 再加 (owner_id = auth.uid()::text or is_ws_owner(...))",
+     "PRD / 文档 Markdown 内用 [名称](#f/<id>) 引用，marked 渲染即站内跳转"
+    ],
+    "status": "新增"
+   },
+   {
+    "name": "tasks",
+    "purpose": "执行层不变，只加回链与例行标记",
+    "fields": [
+     "+ routine_id uuid null references routines on delete set null（由定时规则生成的例行任务）",
+     "+ doc_id uuid null references docs on delete set null（第三期：纪要转任务）",
+     "status 仍为 todo / doing / done，不加 review",
+     "client_id 不加，经 project 派生"
+    ],
+    "relations": [
+     "N → 1 routines、N → 1 docs",
+     "1 → N files（files.task_id，任务附件）",
+     "RLS 不变；写操作改字段级 update({status, done_at})"
+    ],
+    "status": "改造"
+   },
+   {
+    "name": "reminders",
+    "purpose": "两人之间的通知通道；用关联字段替代评论 / @ 提及",
+    "fields": [
+     "+ doc_id uuid null references docs on delete set null",
+     "+ file_id uuid null references files on delete set null",
+     "+ routine_id uuid null（同一 routine 当天只保留一条，run_routines 用它去重）",
+     "to_user / from_user / message / task_id / remind_at / read 不变"
+    ],
+    "relations": [
+     "N → 1 tasks / docs / files / routines",
+     "Inbox 把消息里的 #c/ #p/ #d/ #f/ 渲染成可点链接；关联任务 / 文档 / 文件显示为 chip",
+     "RLS 不变（r_select 顺手加 is_ws_member）"
+    ],
+    "status": "改造"
+   },
+   {
+    "name": "routines",
+    "purpose": "定时规则从「只发消息」升级为「可生成可勾选任务」，承载 Miranda 每日 SEO/SEM 巡检",
+    "fields": [
+     "+ mode text check in ('reminder','task') default 'reminder'",
+     "+ project_id uuid null、+ client_id uuid null（生成任务的归属；消息可带 #c/<id>）",
+     "+ task_title text null（mode='task' 时的任务标题）",
+     "hour / minute / weekdays / tz / active / last_fired 不变",
+     "tz 加 before insert/update 触发器校验时区名"
+    ],
+    "relations": [
+     "run_routines()：mode='task' 分支 insert tasks(title, project_id, assignee_id=to_user, due=本地今日, routine_id, created_by)；mode='reminder' 分支带 routine_id 去重",
+     "ro_update / ro_delete 放宽 or to_user = auth.uid()（Miranda 能暂停发给自己的规则）",
+     "store 订阅 routines（现已在 publication 但未订阅）"
+    ],
+    "status": "改造"
+   },
+   {
+    "name": "DOC_TPL / STAGE_TPL / CHANNELS / CATEGORIES（代码常量，不建表）",
+    "purpose": "新建文档 / 项目时按 kind / 模板套骨架；所有枚举的中文标签表；改模板改代码",
+    "fields": [
+     "DOC_TPL: Record<DocKind,string>：brief（客户/目标/受众/渠道/预算/交付物/时间/KPI）、sop（适用场景/步骤/检查清单）、meeting（参会/日期/结论/待办 - [ ]/下次）、log（## YYYY-MM-DD 一行一条）、review（目标 vs 结果/数据/做得好/改进/下一步）、proposal（沿用 Sara 报价文案习惯：只写事实）、feedback（来源 wechat|email|call|meeting / 原话 / 处理）",
+     "STAGE_TPL 从按 type 索引改为按模板名索引：product（现有 6 步）、ops-seo（关键词→内容→技术→月报）、ops-xhs（选题→制作→发布→数据）、ops-ads（brief→素材→上线→优化→复盘）、ops-web（需求→设计→开发→验收→上线）、ops（现有 4 步）",
+     "CHANNELS、FILE_CATEGORIES、CLIENT_STAGES 的 value→label 表，Tags.tsx 加 ChannelTag / KindTag / CategoryTag / ClientTag"
+    ],
+    "relations": [
+     "defaultStages(template) 签名改一下；PRD_TPL 保留给项目 prd"
+    ],
+    "status": "改造"
+   }
+  ],
+  "navigation": [
+   {
+    "name": "今天",
+    "job": "每日工作台：例行巡检打卡、到期任务、今天完成、花园",
+    "status": "改造",
+    "note": "新增「例行」分组置顶（routine_id 非空且 due=今天，勾完即打卡进花园小花）；快速添加的项目下拉改为 canEdit 过滤（修现有 bug）；项目卡显示客户名；不加客户 chips（未巡检提示放客户列表，避免两处表达）"
+   },
+   {
+    "name": "本周",
+    "job": "周节拍：周一排本周、周五收本周",
+    "status": "改造",
+    "note": "顶部计数条（计划 / 完成 / 逾期，按人切换）；「把逾期的挪到本周」批量按钮；手机端卡片加「移到…」按钮（+1 天 / 下周同日 / 未排期）替代失效的触屏拖拽；桌面端进「更多」菜单之外的顶栏保留"
+   },
+   {
+    "name": "看板",
+    "job": "三列状态流，不加第四列",
+    "status": "保留",
+    "note": "小改：完成列默认只显示最近 14 天（列头「显示全部」）；筛选从 全部/产品/运营 扩为 客户下拉 + 渠道 chips，筛选值写 localStorage；卡片显示附件数"
+   },
+   {
+    "name": "项目",
+    "job": "产品线 / 运营线两条 lane 的项目列表与项目页",
+    "status": "保留",
+    "note": "运营线卡片加客户 tag 与渠道 chips，支持「按客户分组」开关；ProjectDialog 加客户下拉（仅 ops）、渠道多选、链接编辑、阶段模板选择；项目页右侧新增「文档」「文件」两个面板，PRD 编辑器换成抽出的 MdEditor；手机端收进「更多」"
+   },
+   {
+    "name": "客户",
+    "job": "新的一级入口：客户列表 + 全量文档 / 文件视图；Miranda 每天从这里开始巡检",
+    "status": "新增",
+    "note": "#clients 顶部三个 seg：客户（按 stage 分组卡片、渠道筛选、搜索、未巡检灰提示）| 文档（全工作区 docs 列表，kind / 客户筛选，置顶 SOP 一排）| 文件（FilesPanel 全量模式 + 用量条）。子路由 #c/:id 客户页（链接 chips + 概览 / 文档 / 文件 / 日志 四 seg）、#d/:id 文档页、#f/:id 文件详情；不新增独立「文档」「文件」顶级导航"
+   },
+   {
+    "name": "提醒",
+    "job": "通知中心 + 定时规则",
+    "status": "改造",
+    "note": "按 kind 分组（例行 / 指派 / 关联文档文件 / 其他），「全部标已读」「清除 7 天前已读」；消息里 #c/ #p/ #d/ #f/ 渲染成链接，关联任务 / 文档 / 文件可点开；定时规则表单加「生成为任务」开关 + 归属客户 / 项目，列表可编辑不用删了重建"
+   },
+   {
+    "name": "成员",
+    "job": "成员、邀请、权限矩阵、我的资料",
+    "status": "保留",
+    "note": "代码不动；member 视角加「我可以编辑的项目」列表；手机端从 tabbar 移入「更多」"
+   },
+   {
+    "name": "更多（手机 tabbar 专用）",
+    "job": "收纳低频页面，保证手机底部 5 个位置",
+    "status": "新增",
+    "note": "手机 ≤640px tabbar 固定为：今天 / 客户 / 看板 / 提醒 / 更多（本周 / 项目 / 成员）；桌面顶栏 7 项：今天 / 本周 / 看板 / 客户 / 项目 / 提醒 / 成员；hashchange 时 scrollTo(0,0)"
+   }
+  ],
+  "file_hub": {
+   "storage": "Supabase Storage 新建一个私有 bucket `files`（不勾 public，file_size_limit 设 20MB 留余量），对象路径固定 `{workspace_id}/{file_id}-{safe_name}`，首段就是工作区 id。storage.objects 三条策略：select / insert 要求 bucket_id='files' and is_ws_member((storage.foldername(name))[1]::uuid)；delete 再加 (owner_id = auth.uid()::text or is_ws_owner(...))（owner 列已弃用，用 owner_id）。元数据在 public.files（kind upload|link、name、path、url、mime、size、category、period、client_id/project_id/doc_id/task_id、uploaded_by），加入 supabase_realtime 并 replica identity full。上传顺序：前端校验 → 图片压缩 → storage.upload(path, blob, {upsert:false}) → insert files 行；DB 失败则 storage.remove 回滚。删除反序：先 remove([path]) 再 delete 行，remove 失败不删行并 toast。所有 storage 调用收口在 src/lib/upload.ts 与 store 两处，日后换 R2 / Pro 只改这两处。signedUrl 在内存 Map 缓存 50 分钟，同一会话不重复签。",
+   "organization": "不做文件夹。四个维度筛选：客户 / 项目 / 所属文档或任务 / category（合同报价 contract、brief、素材 asset、交付物 deliverable、报告数据 report、其他），report 类带 period（YYYY-MM）驱动客户页「报告时间线」（一月一格，缺月灰格「未上传」）。上传时归属从上下文自动继承（在任务弹窗传 → 补 task/project/client；在项目页传 → 补 project/client），UploadDialog 只留 category 一个必选、名称默认文件名。一个 FilesPanel 组件带 props {clientId?, projectId?, docId?, taskId?} 复用到客户页、项目页、文档页、任务弹窗；「客户」页的「文件」seg 是它的无过滤全量模式。上传件与外链同表同列，只是图标不同、外链无大小。产品线项目的文件 client_id 为空，全量视图里归「内部」。",
+   "permissions": "读 / 上传 = 工作区成员（不叠加 can_edit_project，Miranda 必须能传自己负责客户的文件）；删除 = 上传者或 owner；改元数据（名称 / category / 归属）= 上传者或 owner。不做文件级权限、不做客户级成员隔离。这与 README 现有「按项目分权」口径不同，需 Sara 拍板（D1）并更新 README。storage 策略上线前用第二个账号（Miranda）实测：能看、能传、不能删别人的；再用第三个测试账号验证跨工作区读不到。",
+   "sharing": "内部：createSignedUrl(path, 3600) 打开 / 下载；image/* 与 application/pdf 在新窗口预览，其余直接下载。对外：文件行「复制 7 天外链」= createSignedUrl(path, 7*86400)，toast 明说「拿到链接的人 7 天内都能下载，到期前无法撤销」；发错文件就等过期。不做公开桶、不做 shares 表、不做 Edge Function、不做免登录落地页、不做打开次数统计。",
+   "limits": "1GB Storage、5GB/月出站、单对象 50MB 是免费版硬顶且无超额保护。对策：(1) 前端单文件 ≤ 20MB，超限直接提示「改为添加外链」；(2) 图片 >1600px 用 canvas 转 webp q=0.82，UploadDialog 有「保留原图」开关，category=asset（设计源）默认不压；(3) 视频、PSD/AI、大素材包、Canva/Figma/Drive/飞书一律 kind='link'，规则写在上传区文案与 README；(4) 「客户」页文件 seg 顶部用量条 = 前端 sum(size) / 1024MB，80% 变黄、95% 变红并禁止非外链上传；(5) 不做版本：同名重传提示「替换」（删旧对象再传）或改名另存，只有 contract/proposal 类建议改名保留；(6) 列表用类型图标不拉缩略图，预览只在点开时签名，控制出站流量；(7) 按 marketing 公司实际（合同/报价 PDF 1–5MB、压缩后图片 200–500KB、月报 PDF、Excel 导出），1GB 约装 400 份 PDF + 1000 张图，两人两年够用；不够时升级路径：Pro US$25/月（100GB）或换 R2，因调用已收口在 upload.ts 改动可控。另外 Supabase 免费项目 7 天无活动会暂停，加 GitHub Actions 每 5 天 curl 一次 REST 保活。"
+  },
+  "not_doing": [
+   "不做块编辑器 / 富文本 / 协同光标 / 文档版本历史：文档只是 Markdown textarea + marked 预览 + 800ms 自动保存，回滚靠 Supabase 每日备份",
+   "不做页面树、文件夹、自由标签：文档靠「挂靠 + kind + 搜索」，文件靠「客户 / 项目 / 文档 / category」筛选，kind / category / channels 都是固定枚举",
+   "不做独立的「文档」「文件」顶级导航、不做 ⌘K 全局搜索 Modal（第一、二期）：搜索走各列表的本地筛选，全局搜索留到数据量证明需要",
+   "不做动态流 / posts / @ 提及 / 「收到」/ 评论线程 / 系统事件帖：就某篇文档或文件催人用现有 reminders 加 doc_id / file_id",
+   "不给 tasks.status 加 review 第四列、不做通过 / 打回验收流、不做 needs_review / reviewed_by 字段；审核 = 一条带 file_id 的提醒",
+   "不做 assets + asset_versions 双表、不做「设为当前版本」、不做缩略图对象、不做 PDF 缩略图（需 pdf.js）",
+   "不做 shares 表、Edge Function 分享、#s/token 免登录落地页、打开次数统计：对外只发 7 天签名链接",
+   "不做 Office / 视频在线预览：只预览图片和 PDF，其余下载",
+   "不做 Google Drive / 飞书云盘 OAuth 同步或导入器：大文件一律外链",
+   "不做 Semrush / GA / Google Ads API 拉数：客户页只存链接 + 人工日志 + 周报骨架",
+   "不做 sprint / epic / story point / 子任务 / 依赖 / 甘特图 / 工时计费 / 自动化规则引擎",
+   "不做多工作区、客户门户、客户登录、客户级成员权限：Miranda 看得到全部客户",
+   "不迁移 projects.prd 到 docs：PRD 留在项目上，docs 只承载新 kind",
+   "不做 Web Push / 邮件 / 飞书推送（本轮）：例行任务 + 早上打开 PWA 覆盖 Miranda 场景；推送作为独立决策（D6）",
+   "不做中文全文检索（tsvector）、不做 docs.body 服务端搜索（第一、二期）",
+   "不做「今天」页「今天要看的客户」chips：未巡检提示只在客户列表一处",
+   "不把 supabase db push 纳入 deploy.yml（需要 access token 进 Secrets）：本轮用 migrations 目录 + README 执行记录"
+  ],
+  "epics": [
+   {
+    "id": "E1",
+    "title": "先修再建：数据层与同步修复",
+    "goal": "把四个已核实的高危 gap 和并发覆盖问题在新对象上线前修掉，并建立 SQL 迁移目录，让后续三张新表可以安全落地",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E1-S1",
+      "title": "删除事件与后台切回能正确同步",
+      "user": "Miranda",
+      "value": "Sara 删任务 / 项目 / 文件后我这边不再显示旧数据；手机切后台再回来能看到最新",
+      "acceptance": [
+       "schema：projects / tasks / reminders / workspace_members / routines 执行 replica identity full；新表建表即带此语句",
+       "store：订阅列表加 routines，refetch 分支对应重拉；ch.subscribe(status) 在 SUBSCRIBED 时 loadAll；visibilitychange 为 visible 与 online 事件触发 reload",
+       "两个账号实测：一方删任务，另一方 3 秒内消失；手机切后台 5 分钟再回来数据一致",
+       "loadAll / refetch 检查 error，出错保留旧状态并 toast「同步失败，请检查网络」"
+      ],
+      "tasks": [
+       {
+        "title": "migrations/001_replica_identity.sql 与 publication 检查",
+        "type": "数据库",
+        "estimate_h": 1
+       },
+       {
+        "title": "store.tsx realtime 订阅 routines、subscribe 回调补拉、visibility/online 重拉、error 检查",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "双账号回归验证并记录到 README",
+        "type": "流程",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": []
+     },
+     {
+      "id": "E1-S2",
+      "title": "工作区归属与注册安全",
+      "user": "Sara",
+      "value": "Miranda 无论先注册还是先被邀请都能进我的工作区；陌生人不能用她的邮箱抢注",
+      "acceptance": [
+       "loadMembership 拉全部 membership，优先 role='member' 的工作区；依赖改为 user?.id",
+       "handle_new_invitation 改查 auth.users 匹配邮箱；profiles 加触发器禁止改 email",
+       "两人注册完成后在 Supabase 关闭 Allow new users to sign up（拍板 D7），README 记录",
+       "revoke execute on run_routines from anon, authenticated"
+      ],
+      "tasks": [
+       {
+        "title": "store.tsx loadMembership 改造",
+        "type": "前端",
+        "estimate_h": 1
+       },
+       {
+        "title": "migrations/002_auth_hardening.sql（invitation 匹配、profiles email 触发器、revoke）",
+        "type": "数据库",
+        "estimate_h": 2
+       },
+       {
+        "title": "Supabase 控制台关闭注册 + README 第一次使用更新",
+        "type": "部署",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": []
+     },
+     {
+      "id": "E1-S3",
+      "title": "手机上的通知与安装引导",
+      "user": "Miranda",
+      "value": "Android 上应用开着时提醒能弹；iPhone 知道要添加到主屏幕",
+      "acceptance": [
+       "store 通知改为 navigator.serviceWorker.ready.then(r => r.showNotification(...,{tag: reminder.id}))，桌面与 Android 均弹",
+       "iOS Safari 未 standalone 时顶栏显示一次性提示「分享 → 添加到主屏幕」，可关闭并记 localStorage",
+       "Inbox 在不支持 Notification 时显示同样说明而不是空白",
+       "main.tsx 加每小时 r.update() + visibilitychange 检查更新"
+      ],
+      "tasks": [
+       {
+        "title": "showNotification 替换与 tag 去重",
+        "type": "前端",
+        "estimate_h": 1
+       },
+       {
+        "title": "iOS 安装引导条与 Inbox 说明",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "SW 周期更新检查",
+        "type": "部署",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": []
+     },
+     {
+      "id": "E1-S4",
+      "title": "字段级更新取代整行 upsert，修任务弹窗三个小 bug",
+      "user": "Sara",
+      "value": "两人同时改 PRD / 阶段 / 看板不再互相覆盖；Miranda 在今天页不再遇到 RLS 报错",
+      "acceptance": [
+       "store 新增 updateProject(id, patch) / updateTask(id, patch)，onPrd / toggleStage / setStageDue / Board 拖拽 / TaskRow toggle 只传变化字段；upsert 仅用于新建",
+       "Today 快速添加的项目下拉用 canEdit 过滤",
+       "TaskDialog：当前项目不可编辑时项目下拉 disabled 并显示原项目；删除加 confirm；删除按钮条件与 t_delete 一致",
+       "PRD 编辑时检测远端 updated_at 变化显示「对方刚改过」黄字"
+      ],
+      "tasks": [
+       {
+        "title": "store update 系列函数与调用方改造",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "Today / TaskDialog 三处 bug 修复",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "并发回归：两人同时改同一项目",
+        "type": "流程",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": []
+     },
+     {
+      "id": "E1-S5",
+      "title": "SQL 迁移目录、部署顺序与保活",
+      "user": "Sara",
+      "value": "以后每次改表都知道线上库执行到哪一步；假期后项目不被暂停",
+      "acceptance": [
+       "新建 supabase/migrations/ 目录，schema.sql / routines.sql 之后的改动全部按 NNN_名称.sql 编号，README 记录「线上已执行到 NNN」",
+       ".github/workflows/keepalive.yml 每 5 天 curl 一次 REST（带 apikey）",
+       "README 更新：部署顺序（schema → routines → migrations）、routines.sql 必须执行、publishable key 用词统一、7 天暂停说明",
+       "deploy.yml 加 pull_request 触发的 build-only job"
+      ],
+      "tasks": [
+       {
+        "title": "migrations 目录与 README 执行记录",
+        "type": "部署",
+        "estimate_h": 1
+       },
+       {
+        "title": "keepalive workflow",
+        "type": "部署",
+        "estimate_h": 0.5
+       },
+       {
+        "title": "README 内容修订（权限口径、功能列表、还没做清单）",
+        "type": "内容",
+        "estimate_h": 1.5
+       }
+      ],
+      "depends_on": []
+     }
+    ]
+   },
+   {
+    "id": "E2",
+    "title": "客户档案：以客户为根",
+    "goal": "建 clients 表、把运营线项目挂到客户、上线客户列表与客户页，并用 seed 一次性灌入在营客户，让 Miranda 每天的巡检有一个可点的入口",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E2-S1",
+      "title": "clients 表与 store 接入",
+      "user": "Sara",
+      "value": "客户成为系统里的一等对象，两人都能建和改",
+      "acceptance": [
+       "migrations/003_clients.sql：表、check、RLS（成员读写、owner 删）、publication、replica identity full、touch 触发器",
+       "types.ts 加 Client；store State 加 clients，loadAll / refetch / realtime 订阅接入，upsertClient / updateClient / deleteClient（删除仅 owner，confirm）",
+       "Miranda 账号能新建、改名、归档客户；删除按钮不可见"
+      ],
+      "tasks": [
+       {
+        "title": "003_clients.sql",
+        "type": "数据库",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "types / store 接入与三个写函数",
+        "type": "前端",
+        "estimate_h": 2
+       }
+      ],
+      "depends_on": [
+       "E1-S1",
+       "E1-S4"
+      ]
+     },
+     {
+      "id": "E2-S2",
+      "title": "项目挂客户、渠道与链接",
+      "user": "Sara",
+      "value": "运营线项目能标明属于哪个客户、跑哪些渠道，项目页直接点开投放后台",
+      "acceptance": [
+       "migrations/004_projects_client.sql：projects 加 client_id / channels / links / template",
+       "ProjectDialog：type=ops 时显示客户下拉、渠道多选 chips、链接编辑（label+url 行，增删）；product 类型不显示客户",
+       "Projects 页运营线卡片显示客户 tag 与渠道 chips，「按客户分组」开关记 localStorage",
+       "ProjectDetail 头部显示客户 tag（可点跳 #c/:id）、渠道 chips、链接 chips 新窗口打开",
+       "client_id 为空的项目一切表现与现在一致"
+      ],
+      "tasks": [
+       {
+        "title": "004_projects_client.sql",
+        "type": "数据库",
+        "estimate_h": 0.5
+       },
+       {
+        "title": "ProjectDialog 扩展（客户 / 渠道 / 链接编辑）",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "Projects 卡片与 ProjectDetail 头部",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "Tags.tsx 加 ClientTag / ChannelTag",
+        "type": "前端",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E2-S1"
+      ]
+     },
+     {
+      "id": "E2-S3",
+      "title": "客户列表页 #clients 与 ClientDialog",
+      "user": "Miranda",
+      "value": "一眼看全部在营客户、渠道组合、谁今天还没巡检，从这里开始一天",
+      "acceptance": [
+       "#clients 按 stage 分组（在营 / 线索 / 暂停 / 流失）复用 Lane + pcard 样式；卡片：名称、行业、渠道 chips、负责人、活跃 campaign 数、待办数、最近日志日期（>3 天灰色「未巡检」）",
+       "顶部渠道筛选 chips + 搜索框（本地匹配 name / industry）",
+       "「+ 新建客户」成员均可；ClientDialog：名称 / 行业 / 阶段 / 渠道 / 负责人 / 链接行编辑（label + url，预设 官网 GA GSC Semrush Ads 小红书 六个 label 快捷）/ 归档 / owner 删除 confirm",
+       "手机端单列，卡片点进 #c/:id"
+      ],
+      "tasks": [
+       {
+        "title": "Clients.tsx 列表页",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "ClientDialog（含链接行编辑器）",
+        "type": "前端",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "客户卡与 seg 样式（复用 .lane/.pcard/.seg）",
+        "type": "设计",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E2-S1"
+      ]
+     },
+     {
+      "id": "E2-S4",
+      "title": "客户页 #c/:id 概览",
+      "user": "Miranda",
+      "value": "一个客户的全部在一页：一排链接点完巡检，看 campaign、待办、备注",
+      "acceptance": [
+       "头部：客户名 contentEditable 重命名（沿用 ProjectDetail 写法）、阶段 / 行业 / 渠道 tags、负责人、「设置」打开 ClientDialog",
+       "链接 chips 一排新窗口打开；无链接时提示「在设置里添加 GA / Semrush 链接」",
+       "四个 seg：概览 / 文档 / 文件 / 日志（文档、文件、日志 seg 在 E3 / E4 填充，本故事先占位显示「即将可用」）",
+       "概览：该客户未归档 projects（pcard thin + Stepper mini，owner 或拍板 D2 放开的成员可「+ 新建 campaign」预填 client_id）+ 该客户待办任务（TaskRow）+ 备注（MdEditor，字段级 update({note})）",
+       "客户不存在时兜底页"
+      ],
+      "tasks": [
+       {
+        "title": "ClientDetail.tsx 头部与概览",
+        "type": "前端",
+        "estimate_h": 4
+       },
+       {
+        "title": "备注接 MdEditor（依赖 E3-S1）",
+        "type": "前端",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E2-S3",
+       "E3-S1"
+      ]
+     },
+     {
+      "id": "E2-S5",
+      "title": "在营客户 seed 导入",
+      "user": "Sara",
+      "value": "上线第一天客户页就是满的，两人不用回到聊天和 Drive 找链接",
+      "acceptance": [
+       "scripts/seed_clients.csv（客户名 / 行业 / 阶段 / 渠道 / 负责人 / 官网 / GA / GSC / Semrush / Ads / 小红书）由 Sara 从现有在营客户清单填好",
+       "scripts/seed_clients.sql 由 CSV 生成，insert clients + 更新对应 projects.client_id / channels，可重复执行（on conflict do nothing）",
+       "在 Supabase SQL Editor 执行后，客户列表看到全部在营客户与链接，运营线项目都挂上客户"
+      ],
+      "tasks": [
+       {
+        "title": "整理在营客户与链接清单 CSV",
+        "type": "内容",
+        "estimate_h": 2
+       },
+       {
+        "title": "CSV → SQL 生成脚本与执行",
+        "type": "数据库",
+        "estimate_h": 1.5
+       }
+      ],
+      "depends_on": [
+       "E2-S2"
+      ]
+     },
+     {
+      "id": "E2-S6",
+      "title": "提醒消息里的站内链接可点",
+      "user": "Miranda",
+      "value": "定时提醒「看 SEO/SEM」里直接点 #c/xxx 进客户页，不用再去找",
+      "acceptance": [
+       "Inbox 渲染消息时把 #c/ #p/ #d/ #f/ 开头的 token 转成 <a href>",
+       "Routines 表单加「关联客户」下拉，保存时自动在消息末尾附 #c/<id>",
+       "关联任务 chip 可点开 TaskDialog"
+      ],
+      "tasks": [
+       {
+        "title": "Inbox 链接渲染与任务 chip 可点",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "Routines 表单关联客户",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E2-S1"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "E3",
+    "title": "文档：挂在客户与项目上的 Markdown",
+    "goal": "抽出 MdEditor，建 docs 表与 append_log，上线文档页、客户页文档 / 日志 tab、项目页文档面板，让 brief / SOP / 纪要 / 日志 / 复盘 / 提案有落点",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E3-S1",
+      "title": "MdEditor 组件抽取与并发提示",
+      "user": "Sara",
+      "value": "PRD、客户备注、文档共用一个编辑器，两人同时改不再丢内容",
+      "acceptance": [
+       "src/components/MdEditor.tsx：props {value, updatedAt, onSave(text), readOnly}，内含 textarea + marked 预览 seg + 800ms 防抖 + 聚焦时忽略远端覆盖 + 「已保存 hh:mm」",
+       "远端 updatedAt 变化且本地聚焦时显示「对方刚改过，失焦后会刷新」黄字",
+       "ProjectDetail 的 PRD 面板换成 MdEditor，行为与现在一致；renderMd 过滤 javascript: 链接",
+       "手机端 textarea 全宽，编辑 / 预览 seg 保留"
+      ],
+      "tasks": [
+       {
+        "title": "抽取 MdEditor 并替换 ProjectDetail",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "并发提示与链接协议过滤",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E1-S4"
+      ]
+     },
+     {
+      "id": "E3-S2",
+      "title": "docs 表、append_log 与 store",
+      "user": "Sara",
+      "value": "文档是数据库里的一等对象，日志追加不会互相覆盖",
+      "acceptance": [
+       "migrations/005_docs.sql：表、kind check、挂靠 check、log 唯一约束、RLS、publication、replica identity full、rpc append_log(doc_id, line)（security definer，校验 is_ws_member，同日已有「## 日期」段则追加一行，否则在 body 头部插入新段）",
+       "store：docs 列表只 select id,title,kind,client_id,project_id,pinned,archived,updated_at,updated_by；loadDocBody(id) 按需拉；createDoc(kind, 挂靠) 套 DOC_TPL；updateDoc(id, patch)；appendLog(clientId, line) 找不到 log 文档时先建",
+       "DOC_TPL / DOC_KINDS 常量在 util.ts"
+      ],
+      "tasks": [
+       {
+        "title": "005_docs.sql 与 append_log",
+        "type": "数据库",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "store docs 接入（元数据 / 按需 body / 写函数）",
+        "type": "前端",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "DOC_TPL 七套模板文案",
+        "type": "内容",
+        "estimate_h": 1.5
+       }
+      ],
+      "depends_on": [
+       "E2-S1"
+      ]
+     },
+     {
+      "id": "E3-S3",
+      "title": "文档页 #d/:id",
+      "user": "Sara",
+      "value": "打开一篇 brief / SOP / 提案就能写，看得到挂在哪、谁最后改的",
+      "acceptance": [
+       "头部：标题 contentEditable、KindTag、挂靠 chips（客户 / 项目可点跳）、更新时间与更新人、SOP 置顶开关、归档、「发提醒」按钮（ReminderDialog preset docId）、删除（创建者或 owner，confirm）",
+       "正文 MdEditor，保存走 updateDoc({body, updated_by})",
+       "kind=feedback 模板含来源 / 原话 / 处理三段",
+       "底部「附件」区占位（E4-S3 填充）",
+       "路由 parse() 加 d/ 分支"
+      ],
+      "tasks": [
+       {
+        "title": "DocDetail.tsx",
+        "type": "前端",
+        "estimate_h": 3.5
+       },
+       {
+        "title": "ReminderDialog preset 扩展 docId / fileId",
+        "type": "前端",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E3-S1",
+       "E3-S2"
+      ]
+     },
+     {
+      "id": "E3-S4",
+      "title": "客户页「文档」与「日志」tab",
+      "user": "Miranda",
+      "value": "看完 SEO/SEM 顺手记一笔，一回车就落到该客户的运营日志；客户的 brief / 纪要 / 反馈都在文档 tab",
+      "acceptance": [
+       "文档 tab：该客户 docs 按 kind 分组列表（含挂在该客户项目下的），「新建」下拉（brief / 纪要 / 复盘 / 提案 / 反馈 / 备注）建后跳 #d/:id；置顶 SOP 排最前",
+       "日志 tab：顶部「记一笔」单行输入 + 回车调 appendLog，列表按日期倒序渲染该客户 log 文档 body；今天已记则输入框旁显示绿勾",
+       "客户卡的「未巡检」判定读 log 文档 updated_at"
+      ],
+      "tasks": [
+       {
+        "title": "客户页文档 tab",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "日志 tab 与记一笔",
+        "type": "前端",
+        "estimate_h": 2
+       }
+      ],
+      "depends_on": [
+       "E2-S4",
+       "E3-S2"
+      ]
+     },
+     {
+      "id": "E3-S5",
+      "title": "项目页「文档」面板与复盘钩子",
+      "user": "Sara",
+      "value": "campaign 的纪要、复盘、周报就挂在项目上；运营线勾完「复盘」阶段时顺手建复盘文档",
+      "acceptance": [
+       "ProjectDetail 右侧新增「文档」panel：该项目 docs 列表 + 新建（纪要 / 复盘 / 提案）",
+       "ops 项目最后一个阶段勾完成且无 kind=review 文档时，panel 顶部出现「新建复盘文档」按钮，建后跳转",
+       "全工作区「文档」seg（#clients 第二 seg）：最近编辑倒序列表 + kind chips + 客户下拉 + 置顶 SOP 一排"
+      ],
+      "tasks": [
+       {
+        "title": "ProjectDetail 文档面板与复盘钩子",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "#clients 文档 seg 全量视图",
+        "type": "前端",
+        "estimate_h": 2
+       }
+      ],
+      "depends_on": [
+       "E3-S3"
+      ]
+     },
+     {
+      "id": "E3-S6",
+      "title": "纪要 / brief 待办行一键转任务",
+      "user": "Sara",
+      "value": "开完会的纪要里勾的待办直接变成任务，不用再抄一遍",
+      "acceptance": [
+       "migrations 给 tasks 加 doc_id",
+       "kind=meeting / brief 的文档页头部「待办行转任务」：解析行首 `- [ ] ` 且不含 (task:) 的行，批量 createTask(project_id=文档项目, doc_id, assignee=自己)，并把行改写为 `- [ ] 内容 (task:短id)`",
+       "文档页底部「由此生成的任务」列表复用 TaskRow；缩进行、已勾选行、含中文标点的行均正确处理（单元测试覆盖 6 个用例）"
+      ],
+      "tasks": [
+       {
+        "title": "tasks.doc_id 迁移",
+        "type": "数据库",
+        "estimate_h": 0.5
+       },
+       {
+        "title": "解析 / 回写与批量建任务",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "由此生成的任务列表",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E3-S3"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "E4",
+    "title": "文件台：私有桶 + FilesPanel",
+    "goal": "建私有 bucket 与 files 表，用一个 FilesPanel 组件把上传 / 外链 / 预览 / 分享嵌进客户页、项目页、文档页、任务弹窗，并在免费额度内守住",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E4-S1",
+      "title": "Storage 桶、files 表与策略验证",
+      "user": "Sara",
+      "value": "客户文件只有我们两个人看得到，陌生账号读不到",
+      "acceptance": [
+       "Dashboard 建私有桶 files（file_size_limit 20MB）",
+       "migrations/006_files.sql：files 表、category / kind check、RLS（成员读传、上传者或 owner 删改）、storage.objects 三条策略（首段 workspace_id 判 is_ws_member；delete 用 owner_id = auth.uid()::text or is_ws_owner）、publication、replica identity full",
+       "用 Miranda 账号实测：能传能看，不能删 Sara 传的；用第三个测试账号实测跨工作区 list / download 均 403；结果记入 README"
+      ],
+      "tasks": [
+       {
+        "title": "建桶与 006_files.sql",
+        "type": "存储",
+        "estimate_h": 2
+       },
+       {
+        "title": "三账号策略验证",
+        "type": "流程",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E2-S1"
+      ]
+     },
+     {
+      "id": "E4-S2",
+      "title": "lib/upload.ts：校验、压缩、上传回滚、签名缓存",
+      "user": "Miranda",
+      "value": "拖进去就传好，太大的会告诉我改外链，图片自动变小不占额度",
+      "acceptance": [
+       "uploadFile(file, meta, {keepOriginal})：≤20MB 校验（超限抛可读错误「请改为添加外链」）；image/* 且长边 >1600px 用 canvas 转 webp q=0.82，category=asset 或 keepOriginal 时不压；storage.upload → insert files；insert 失败 remove 回滚",
+       "addLink(meta)、deleteFile(row)（先 remove 再 delete，remove 失败不删行）、getUrl(row, ttl) 带 50 分钟内存缓存",
+       "store：files 接入 loadAll / realtime / refetch，usage = sum(size)",
+       "所有 supabase.storage 调用只出现在 upload.ts"
+      ],
+      "tasks": [
+       {
+        "title": "upload.ts 四个函数与压缩",
+        "type": "存储",
+        "estimate_h": 3
+       },
+       {
+        "title": "store files 接入与 usage",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "fmtSize 与 guessCategory(mime) 工具",
+        "type": "前端",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E4-S1"
+      ]
+     },
+     {
+      "id": "E4-S3",
+      "title": "FilesPanel 组件并嵌入客户页 / 项目页 / 文档页",
+      "user": "Miranda",
+      "value": "在客户页、项目页、文档页都能看到并上传这个对象的文件，不用跳来跳去",
+      "acceptance": [
+       "FilesPanel props {clientId?, projectId?, docId?, taskId?, compact?}：列表（图标 + 名称、CategoryTag、大小、上传人、时间）、行操作（预览 image/pdf 新窗口 / 下载 / 复制 7 天外链 toast / 删除 confirm 仅上传者或 owner）、「上传」多选 + 整块拖拽、「添加外链」（名称 + url + category）",
+       "UploadDialog：名称默认文件名、category 必选（按 mime 预猜）、「保留原图」开关、归属从 props 自动继承并显示为只读 chips",
+       "客户页文件 tab、项目页「文件」panel、文档页底部附件区三处嵌入并各自预过滤",
+       "手机端列表变卡片，上传按钮可用（多选可选）"
+      ],
+      "tasks": [
+       {
+        "title": "FilesPanel 列表与行操作",
+        "type": "前端",
+        "estimate_h": 4
+       },
+       {
+        "title": "UploadDialog / LinkDialog",
+        "type": "前端",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "三处嵌入与样式",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "文件行与拖拽区视觉（复用 .trow/.tag）",
+        "type": "设计",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E4-S2",
+       "E2-S4",
+       "E3-S3"
+      ]
+     },
+     {
+      "id": "E4-S4",
+      "title": "全量文件台（#clients 的「文件」seg）与用量条",
+      "user": "Sara",
+      "value": "不记得在哪个客户里也能按类型 / 时间找到；随时知道 1GB 还剩多少",
+      "acceptance": [
+       "#clients 第三 seg 渲染 FilesPanel 全量模式：客户下拉 / 项目下拉 / category chips / 只看外链 / 名称搜索",
+       "顶部用量条 sum(size)/1024MB，80% 黄并提示「大文件请用外链」，95% 红并禁用非外链上传",
+       "上传区文案写明规则：视频、PSD/AI、素材包一律外链；README 同步",
+       "空状态：「把合同、月报、素材拖进来，或先建一个客户」"
+      ],
+      "tasks": [
+       {
+        "title": "全量模式筛选与用量条",
+        "type": "前端",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "规则文案与 README",
+        "type": "内容",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E4-S3"
+      ]
+     },
+     {
+      "id": "E4-S5",
+      "title": "报告时间线与月报提醒",
+      "user": "Sara",
+      "value": "一眼看出哪个客户哪个月的月报还没传",
+      "acceptance": [
+       "files.period（YYYY-MM）在 UploadDialog 中 category=report 时出现，默认上月",
+       "客户页概览底部「报告时间线」：最近 12 个月一月一格，有 report 文件显示可点、无则灰格「未上传」",
+       "定时规则示例：每月 1 号「上传上月月报 #c/<id>」写进 README 使用说明"
+      ],
+      "tasks": [
+       {
+        "title": "period 字段迁移（可并入 006）",
+        "type": "数据库",
+        "estimate_h": 0.3
+       },
+       {
+        "title": "报告时间线组件",
+        "type": "前端",
+        "estimate_h": 2
+       }
+      ],
+      "depends_on": [
+       "E4-S3"
+      ]
+     },
+     {
+      "id": "E4-S6",
+      "title": "任务附件",
+      "user": "Miranda",
+      "value": "「把月报改完」这种任务的产出就挂在任务上，完成时顺手传",
+      "acceptance": [
+       "TaskDialog 编辑态加「附件」区（FilesPanel compact，taskId 预填，project/client 自动继承）；新建态提示「保存后可加附件」",
+       "TaskRow .m 区有附件时显示回形针 + 数量；看板卡片同样",
+       "完成任务时若 category=deliverable 提示可选「要附交付物吗」（非强制）"
+      ],
+      "tasks": [
+       {
+        "title": "TaskDialog 附件区",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "TaskRow / Board 回形针标记",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E4-S3"
+      ]
+     },
+     {
+      "id": "E4-S7",
+      "title": "文件详情路由与 Markdown 引用",
+      "user": "Sara",
+      "value": "在 PRD 或提案里写 [报价 v2](#f/xxx) 就能点开文件；就某个文件催对方审核",
+      "acceptance": [
+       "#f/:id 文件详情：预览（图片 img / PDF iframe signed URL）、元数据编辑（名称 / category / 归属）、下载、复制 7 天外链、「请求审核」（ReminderDialog preset fileId，消息含 #f/<id>）、删除",
+       "FilesPanel 行操作加「复制引用」写入剪贴板 [名称](#f/<id>)",
+       "reminders 加 file_id，Inbox 显示文件 chip 可点"
+      ],
+      "tasks": [
+       {
+        "title": "reminders.file_id / doc_id 迁移",
+        "type": "数据库",
+        "estimate_h": 0.5
+       },
+       {
+        "title": "FileDetail.tsx 与引用复制",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "Inbox 文件 / 文档 chip",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E4-S3",
+       "E2-S6"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "E5",
+    "title": "每日巡检与提醒收敛",
+    "goal": "让 Miranda「每天看 SEO/SEM」变成可勾选、可回看的例行任务，收件箱不再堆积，任务与提醒之间有手动入口",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E5-S1",
+      "title": "定时规则可生成例行任务",
+      "user": "Miranda",
+      "value": "每天早上今天页自动出现「看今天的 SEO/SEM」，勾完进花园，漏做能看见",
+      "acceptance": [
+       "migrations/007_routine_task.sql：routines 加 mode / project_id / client_id / task_title；tasks 加 routine_id；reminders 加 routine_id；run_routines() 加 mode='task' 分支 insert tasks(due=本地今日, assignee=to_user, routine_id)，reminder 分支同一 routine 同日只插一条；loop 体 exception 隔离；tz 校验触发器",
+       "Routines 表单加「生成为任务」开关、任务标题、归属客户 / 项目；列表可「编辑」回填表单；ro_update/ro_delete 放宽 to_user",
+       "创建当天已过时刻不立即触发（last_fired 设为创建日）",
+       "Sara 建一条每天 9:00 mode=task 的规则，次日 9:10 前 Miranda 今天页出现该任务"
+      ],
+      "tasks": [
+       {
+        "title": "007_routine_task.sql 与 run_routines 改造",
+        "type": "数据库",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "Routines.tsx 表单与编辑",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "pg_cron 实测一轮",
+        "type": "流程",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E1-S1",
+       "E2-S1"
+      ]
+     },
+     {
+      "id": "E5-S2",
+      "title": "今天页「例行」分组与客户未巡检",
+      "user": "Miranda",
+      "value": "打开今天页先看例行，勾完就是打卡；客户列表告诉我谁三天没看",
+      "acceptance": [
+       "Today 新增「例行」分组置顶（routine_id 非空且 due=今天），勾完进「今天完成」与花园小花；例行任务在看板完成列默认隐藏",
+       "Today 项目卡显示客户名",
+       "客户卡「未巡检」判定：该客户 log 文档 updated_at 与该客户例行任务 done_at 取最近者，>3 天灰提示",
+       "Garden 接收筛选后的任务（只看我的生效）"
+      ],
+      "tasks": [
+       {
+        "title": "Today 例行分组与项目卡",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "未巡检判定与 Garden 传参",
+        "type": "前端",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E5-S1",
+       "E2-S3"
+      ]
+     },
+     {
+      "id": "E5-S3",
+      "title": "收件箱分组与批量清理",
+      "user": "Miranda",
+      "value": "收件箱不被每日提醒淹没，一键清干净",
+      "acceptance": [
+       "Inbox 按类型分组：例行 / 指派 / 关联文档文件 / 其他；默认只展开未读 + 最近 7 天已读",
+       "「全部标已读」「清除 7 天前已读」两个批量按钮（store 批量 update / delete，失败回滚并 toast）",
+       "markRead / deleteReminder / deleteRoutine 乐观更新加回滚",
+       "指派通知 await 结果并 toast"
+      ],
+      "tasks": [
+       {
+        "title": "Inbox 分组与批量按钮",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "store 批量函数与乐观回滚",
+        "type": "前端",
+        "estimate_h": 1.5
+       }
+      ],
+      "depends_on": [
+       "E5-S1"
+      ]
+     },
+     {
+      "id": "E5-S4",
+      "title": "任务弹窗「提醒负责人」",
+      "user": "Sara",
+      "value": "就某个任务催一下 Miranda，不用去收件箱手打任务名",
+      "acceptance": [
+       "TaskDialog 编辑态加「提醒负责人」按钮，打开 ReminderDialog preset {to: assignee_id, taskId, message: 关于「标题」：}",
+       "无负责人时按钮改为「提醒对方」默认选另一位成员"
+      ],
+      "tasks": [
+       {
+        "title": "按钮接线（ReminderDialog preset 已支持）",
+        "type": "前端",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": []
+     }
+    ]
+   },
+   {
+    "id": "E6",
+    "title": "执行层小改：模板、周节拍、看板",
+    "goal": "让现有今天 / 本周 / 看板 / 项目更贴 marketing 节奏，并修手机端触屏拖拽失效",
+    "priority": "P1",
+    "stories": [
+     {
+      "id": "E6-S1",
+      "title": "4 套 marketing 阶段模板",
+      "user": "Sara",
+      "value": "新建 SEO 月度 / 小红书 / 投放 / 建站项目时阶段直接是对的",
+      "acceptance": [
+       "STAGE_TPL 按模板名索引：product、ops、ops-seo、ops-xhs、ops-ads、ops-web；defaultStages(template)；projects.template 记录",
+       "ProjectDialog 新建 ops 项目时多一个「模板」下拉；StagesDialog 加「换模板」（保留已完成状态）与行 ↑↓ 排序",
+       "PRD_TPL 为 ops 模板增加 brief 式骨架（客户 / 目标 / 渠道 / KPI / 交付物）"
+      ],
+      "tasks": [
+       {
+        "title": "util.ts 模板常量与签名",
+        "type": "前端",
+        "estimate_h": 1.5
+       },
+       {
+        "title": "ProjectDialog / StagesDialog 改造",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "四套模板阶段与 brief 文案",
+        "type": "内容",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E2-S2"
+      ]
+     },
+     {
+      "id": "E6-S2",
+      "title": "本周页周节拍与手机改期",
+      "user": "Sara",
+      "value": "周一一键把逾期的挪进本周，手机上也能改日期",
+      "acceptance": [
+       "顶部计数条：本周计划 / 已完成 / 逾期，按 全部 / 我的 / 客户 切换",
+       "「把逾期的挪到本周」批量把 due<今天 且未完成且可编辑的任务 due 改为本周一，confirm 显示条数",
+       "wcard 加「移到…」按钮：+1 天 / 下周同日 / 未排期 / 选日期；≤640px 改为按天纵向列表",
+       "hashchange 时 scrollTo(0,0)"
+      ],
+      "tasks": [
+       {
+        "title": "计数条与批量挪期",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "移到… 菜单与手机纵向布局",
+        "type": "前端",
+        "estimate_h": 2.5
+       }
+      ],
+      "depends_on": [
+       "E1-S4"
+      ]
+     },
+     {
+      "id": "E6-S3",
+      "title": "看板筛选与完成列收敛",
+      "user": "Miranda",
+      "value": "看板只看某个客户或某个渠道，完成列不再无限长",
+      "acceptance": [
+       "筛选：客户下拉 + 渠道 chips + 负责人，替代 全部/产品/运营，值写 localStorage",
+       "完成列默认只显示 done_at 最近 14 天且非例行任务，列头「显示全部」",
+       "卡片显示客户名与附件数；手机端 checkbox / btn.sm / chip 命中区 ≥32px"
+      ],
+      "tasks": [
+       {
+        "title": "Board 筛选与完成列",
+        "type": "前端",
+        "estimate_h": 2
+       },
+       {
+        "title": "触控目标与 dialog overflow 样式",
+        "type": "设计",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": [
+       "E2-S2"
+      ]
+     }
+    ]
+   },
+   {
+    "id": "E7",
+    "title": "导航与应用壳",
+    "goal": "只加一个顶级导航「客户」，手机 tabbar 改为 5 + 更多，所有新路由接入 hash 路由",
+    "priority": "P0",
+    "stories": [
+     {
+      "id": "E7-S1",
+      "title": "路由、顶栏与手机 tabbar 改造",
+      "user": "Miranda",
+      "value": "手机上今天 / 客户 / 看板 / 提醒一排就到，其余在更多里",
+      "acceptance": [
+       "parse() 加 clients、c/、d/、f/ 分支；未知 hash 归一为 today",
+       "桌面顶栏 7 项：今天 / 本周 / 看板 / 客户 / 项目 / 提醒 / 成员；on() 让 c/ d/ f/ 高亮「客户」",
+       "≤640px tabbar：今天 / 客户 / 看板 / 提醒 / 更多；「更多」弹出底部菜单含 本周 / 项目 / 成员 / 安装应用",
+       "375px 宽实测每项不换行不溢出；nav a 加 aria-current；toast 加 role=status"
+      ],
+      "tasks": [
+       {
+        "title": "App.tsx 路由与 nav / tabbar / 更多菜单",
+        "type": "前端",
+        "estimate_h": 2.5
+       },
+       {
+        "title": "tabbar 与更多菜单样式",
+        "type": "设计",
+        "estimate_h": 1
+       }
+      ],
+      "depends_on": []
+     }
+    ]
+   },
+   {
+    "id": "E8",
+    "title": "周报与搜索（日志习惯跑两周后）",
+    "goal": "在日志和例行任务有真实数据后，加周报骨架生成和跨对象搜索",
+    "priority": "P2",
+    "stories": [
+     {
+      "id": "E8-S1",
+      "title": "一键生成本周周报骨架",
+      "user": "Sara",
+      "value": "周五只补结论不抄清单，客户周报底稿半小时变五分钟",
+      "acceptance": [
+       "#clients 文档 seg「生成本周周报」：汇总本周 done_at 任务按客户→项目分组 + 各客户 log 本周条目 + 本周新增交付物文件 → createDoc(kind=weekly, title=第 N 周周报) 并跳转",
+       "客户页文档 tab「生成该客户周报」同逻辑限定单客户；另有「复制为 Markdown」到剪贴板供直接发客户",
+       "上线前提：至少两周日志 / 例行记录已存在（Sara 确认）"
+      ],
+      "tasks": [
+       {
+        "title": "周报聚合函数与两处按钮",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "周报模板文案",
+        "type": "内容",
+        "estimate_h": 0.5
+       }
+      ],
+      "depends_on": [
+       "E3-S4",
+       "E4-S4",
+       "E5-S2"
+      ]
+     },
+     {
+      "id": "E8-S2",
+      "title": "全局搜索",
+      "user": "Sara",
+      "value": "找那个客户 / 那篇 brief / 那个文件不用记路径",
+      "acceptance": [
+       "⌘K / 手机顶栏搜索按钮打开 Modal，本地匹配 clients.name / projects.name / docs.title / files.name / tasks.title，分组显示，上下键 + 回车跳转",
+       "回车无本地结果时追加一次服务端 docs.body ilike 查询",
+       "owner 在文件 seg 有「清理孤儿对象」按钮：list 桶下路径与 files.path 对比后删除"
+      ],
+      "tasks": [
+       {
+        "title": "搜索 Modal",
+        "type": "前端",
+        "estimate_h": 3
+       },
+       {
+        "title": "body ilike 与孤儿清理",
+        "type": "存储",
+        "estimate_h": 1.5
+       }
+      ],
+      "depends_on": [
+       "E3-S5",
+       "E4-S4"
+      ]
+     }
+    ]
+   }
+  ],
+  "sequencing": [
+   {
+    "phase": "第一阶段：修底 + 客户 + 例行 + 文档骨架（两人两周内可用）",
+    "epic_ids": [
+     "E1",
+     "E7",
+     "E2",
+     "E5",
+     "E3"
+    ],
+    "why": "先修四个高危同步 / 权限漏洞并建迁移目录，否则新表会放大旧问题；客户表 + seed 让客户页第一天就是满的；routines 生成任务 + 客户页链接 chips + 记一笔，构成 Miranda 每日闭环；MdEditor 与 docs 是客户备注、日志、文档页的共同底座。E3-S5 / E3-S6 可顺延到第二阶段，E2 的 seed（E2-S5）必须在客户页上线同一天执行。",
+    "weeks": 3
+   },
+   {
+    "phase": "第二阶段：文件台 + 执行层小改",
+    "epic_ids": [
+     "E4",
+     "E6"
+    ],
+    "why": "文件台依赖客户页 / 项目页 / 文档页三个宿主已存在，第二阶段一次嵌入四处；storage 策略需三账号验证再放数据。同期把阶段模板、本周批量挪期、手机改期、看板筛选做掉，这些都是纯前端且直接修手机端高危 gap。E4-S5 报告时间线、E4-S6 任务附件、E4-S7 文件详情放在阶段末尾，先保证上传 / 外链 / 预览 / 分享通路。",
+    "weeks": 3
+   },
+   {
+    "phase": "第三阶段：周报、搜索、纪要转任务",
+    "epic_ids": [
+     "E8"
+    ],
+    "why": "周报骨架只有在日志与例行任务跑满两周后才有数据，否则会被认为没用；全局搜索和孤儿清理等数据量与文件量起来后再做；E3-S6 纪要转任务边界情况多，放最后。若第二阶段结束时日志习惯没有建立，第三阶段先停，回头改日志入口而不是加周报。",
+    "weeks": 2
+   }
+  ],
+  "open_decisions": [
+   {
+    "question": "D1 客户档案、客户级文档与文件的编辑权限：是否放宽为工作区成员全可写（与现有「按项目分权」不同）？",
+    "options": [
+     "A 放宽：clients / docs（无 project_id）/ files 成员全可读写，删除仅创建者或 owner；有 project_id 的 docs 仍按 can_edit_project",
+     "B 严格：全部沿用 can_edit_project，客户级对象只有 owner 可写",
+     "C 折中：客户与文件全员可写，文档按项目分权"
+    ],
+    "recommendation": "A。两人公司里 Miranda 是运营执行者，传不了自己负责客户的文件或记不了日志，功能就废了；README 权限表同步改写。"
+   },
+   {
+    "question": "D2 Miranda 能否新建运营线 campaign（现状 owner 独占新建项目）？",
+    "options": [
+     "A 放开：pr_insert 允许 member 建 type='ops' 且 client_id 非空的项目，并自动写入 project_members",
+     "B 保持：只有 Sara 能建，Miranda 通过提醒请 Sara 建"
+    ],
+    "recommendation": "A。客户页的「+ 新建 campaign」对 Miranda 灰着，流水线第一步就卡在 Sara 手里；产品线仍 owner 独占。"
+   },
+   {
+    "question": "D3 每日 SEO/SEM 巡检的形态",
+    "options": [
+     "A 定时规则生成可勾选任务（进今天 / 花园 / 可回看打卡率）",
+     "B 保持现在的收件箱消息 + 记一笔",
+     "C 两者并存：任务 + 消息"
+    ],
+    "recommendation": "A。run_routines 只加一个 if 分支，直接回答 maps 里的开放问题，且顺手解决收件箱堆积；消息模式保留给非任务型提醒。"
+   },
+   {
+    "question": "D4 项目 PRD 是否迁入 docs（kind=prd）？",
+    "options": [
+     "A 不迁：prd 留在 projects，MdEditor 共用即可",
+     "B 迁：一次性 SQL 复制成 doc，前端只读 docs，prd 列停写"
+    ],
+    "recommendation": "A。PRD 编辑链路是现在最稳的部分，迁移只带来双写期风险；等 docs 用顺了再评估。"
+   },
+   {
+    "question": "D5 文件上传上限与图片压缩默认值",
+    "options": [
+     "A 单文件 ≤20MB，图片默认压 webp，category=asset 默认不压，有「保留原图」开关",
+     "B 单文件 ≤50MB（免费版上限），不压缩，靠用量条约束",
+     "C ≤20MB 且强制压缩，不给开关"
+    ],
+    "recommendation": "A。给客户打样 / 印刷的原图不能被压，但截图与小红书素材是体积大头，默认压 + 开关最省额度。"
+   },
+   {
+    "question": "D6 应用关闭时的提醒通道（本蓝图不含）",
+    "options": [
+     "A 暂不做：例行任务 + 早上打开 PWA + iOS 加主屏幕",
+     "B 邮件：run_routines 用 pg_net 调 Resend（最省事）",
+     "C 飞书机器人 webhook（两人都在飞书）",
+     "D Web Push：Edge Function + VAPID + injectManifest（工程量最大）"
+    ],
+    "recommendation": "A 先跑一个月，若 Miranda 仍经常漏看再做 C（飞书 webhook 一条 pg_net 即可，不动 SW）。"
+   },
+   {
+    "question": "D7 注册与邮箱验证策略",
+    "options": [
+     "A 两人注册完立即关闭 Allow new users to sign up，再邀请人时临时打开",
+     "B 保持开放但开启 Confirm email",
+     "C 改 handle_new_user：无邀请不自建工作区"
+    ],
+    "recommendation": "A。零代码、立刻堵住抢注与额度占用；C 作为第二阶段顺手做。"
+   },
+   {
+    "question": "D8 手机底部 tabbar 五个位置的组成",
+    "options": [
+     "A 今天 / 客户 / 看板 / 提醒 / 更多（本周 / 项目 / 成员）",
+     "B 今天 / 本周 / 看板 / 客户 / 提醒，项目与成员进更多",
+     "C 今天 / 客户 / 提醒 / 更多 四项，看板也进更多"
+    ],
+    "recommendation": "A。Miranda 手机上最常用的是今天 / 客户 / 提醒，看板是两人共同视图；本周主要在电脑上排。"
+   },
+   {
+    "question": "D9 文件同名重传是否保留旧版本",
+    "options": [
+     "A 不做版本：提示「替换」（删旧对象再传）或改名另存",
+     "B 单表 version int + 保留旧对象（吃额度）",
+     "C 只对 contract / proposal 类保留旧版，其余替换"
+    ],
+    "recommendation": "A。合同 / 报价改版本时人工改名（报价 v2.pdf）就够，1GB 额度不值得为版本机制买单；两人公司也不会去点「设为当前」。"
+   },
+   {
+    "question": "D10 任务负责人权限口径（现有 gap）",
+    "options": [
+     "A 承认现状：被指派就能改整条任务，README 改写，前端隐藏删除按钮",
+     "B 收紧：触发器限制负责人只能改 status / done_at / note"
+    ],
+    "recommendation": "A。两人互信，收紧只增加触发器复杂度；只修删除按钮显示与 RLS 不一致这一处。"
+   }
+  ]
+ },
+ "verified": [
+  {
+   "epic_id": "E7",
+   "stories": [
+    {
+     "id": "E7-S1",
+     "status": "部分已做",
+     "evidence": "应用壳与 hash 路由骨架已经存在，但故事要求的「客户」入口、5+更多 tabbar 和无障碍属性均未做。已做部分：(1) /Users/sara/Projects/parallel/src/App.tsx 第 12-13 行 `type Route` 与 `parse()`：只识别 `p/<id>`（项目详情）和纯视图名，无 `clients`、`c/`、`d/`、`f/` 分支；未知 hash 不会归一为 today，只是渲染时兜底落到 `<Today />`（第 41 行三元链末尾），此时 `route.v` 仍是未知值，顶栏/tabbar 没有任何项高亮。(2) 第 29 行 `const nav: [string,string,string][]` 为 6 项：today/week/board/projects/inbox/members，没有「客户」；第 30 行 `const on = (v)` 只处理 `route.v === 'project' && v === 'projects'` 一种映射，没有 c/ d/ f/ → 客户 的高亮。(3) 第 33-37 行 `.top` 顶栏 + `.nav`，第 43 行 `<nav className=\"tabbar\">` 直接复用同一个 6 项 nav 数组，手机上是 6 项一排，没有「更多」按钮，也没有底部弹出菜单；「安装应用」按钮只在顶栏（第 37 行），而 ≤640px 时 `.top .nav{display:none}`（styles.css 第 247 行）虽然只藏了 nav，安装按钮仍在顶栏，未收进「更多」。(4) 第 43 行 nav a 与第 44 行 `<div className={`toast ...`}>` 均无 `aria-current` / `role=\"status\"`（`grep -rln 'role=\"status\"\\|aria-current' src` 无结果）。(5) /Users/sara/Projects/parallel/src/styles.css 第 245-256 行 tabbar 样式已存在（fixed 底栏、`.tabbar a{min-width:48px;font-size:11px}`、`.toast` 在手机上抬高 76px、`.main` 加 padding-bottom），但没有「更多」菜单/底部 sheet 样式；6 项 × min-width 48px 在 375px 下勉强放得下，但加第 7 项「客户」后必然溢出，正是要改为 5+更多的原因。(6) 全仓 `grep -rn \"clients\\|更多\\|'c/'\" src` 无任何结果，git log 最近提交 20dd2e8「手机底部导航与安装按钮」是现有 tabbar 的来源。toast 状态在 /Users/sara/Projects/parallel/src/state/store.tsx 第 50-56 行（`toastMsg` + 1.8s 自动清除），逻辑无需动。",
+     "adjustment": "保留故事但把工作量缩减为「在现有壳上增量改」而不是重做壳：(a) `parse()` 改成先匹配 `p/`、`c/`、`d/`、`f/` 前缀，再对视图名做白名单校验（today/week/board/clients/projects/inbox/members），不在白名单的统一返回 `{v:'today'}`；(b) `nav` 数组插入 `['clients','客户','◉']` 到 board 之后，`on()` 增加 `['client','doc','file'].includes(route.v) && v==='clients'`；(c) 手机 tabbar 不再复用整个 nav 数组，改用一个 `tabs = ['today','clients','board','inbox']` 子集 + 一个「更多」按钮（`useState` 控制），弹出的底部菜单列出 本周/项目/成员 和「安装应用」（复用现有 `installEvt`）；(d) nav a / tabbar a 加 `aria-current={on(v)?'page':undefined}`，toast div 加 `role=\"status\" aria-live=\"polite\"`；(e) styles.css 在现有 `@media (max-width:640px)` 块里补 `.more-sheet`（fixed 底部、遮罩、safe-area）样式，tabbar 项数固定 5 个后 375px 宽每项约 75px，现有 `min-width:48px` 足够，不需要改字号。设计任务（1h）可与前端任务合并成一个 2.5-3h 的任务。路由分支落地的 `<Clients />`、`<ClientDetail />`、`<Doc />`、`<File />` 视图本身属于其他史诗，本故事只需在 App.tsx 的渲染三元链里接入这些组件的占位/引用，不在本故事内实现视图内容。不建议删除本故事：它是所有新视图的入口，但依赖关系应改为「被 客户/文档/文件 史诗依赖」而非无依赖。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E6",
+   "stories": [
+    {
+     "id": "E6-S1",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/lib/util.ts 第 4-7 行 `STAGE_TPL: Record<ProjectType, string[]>` 只有 product（需求收集→上线 6 步）和 ops（策划/准备/执行/复盘 4 步）两套；第 8-60 行 `PRD_TPL` 同样只有 product/ops 两套，ops 版是「目标/渠道与形式/节奏/关键指标/待确认」，没有 brief 式的 客户/KPI/交付物 段；第 78 行 `defaultStages = (type: ProjectType)` 签名按类型索引，不存在模板参数。/Users/sara/Projects/parallel/src/lib/types.ts 第 5-8 行 `Project` 类型无 `template` 字段；/Users/sara/Projects/parallel/supabase/schema.sql 中 `grep template` 为空，projects 表无该列。/Users/sara/Projects/parallel/src/components/Dialogs.tsx 第 68-113 行 `ProjectDialog` 只有 名称/类型/一句话目标 三个字段，第 80 行 `obj.stages = defaultStages(type); obj.prd = PRD_TPL[type]` 直接按类型取；第 116-146 行 `StagesDialog` 只有改名/改截止/删行/加行（第 128-136 行），没有「换模板」也没有 ↑↓ 排序按钮。整个 src 内 grep 不到 ops-seo/ops-xhs/ops-ads/ops-web 任何字样。",
+     "adjustment": "完全未做，故事按原范围保留。建议两点缩减：(1) 「换模板」保留已完成状态的合并逻辑可简化为「按阶段名匹配保留 done/due，其余重置」，不做复杂 diff；(2) `projects.template` 列可先用 text null 且不加 check 约束，减少 migration 负担。注意 depends_on E2-S2（客户字段）若未落地，brief 骨架里的「客户」段先留空占位，不阻塞本故事。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/lib/util.ts",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css",
+      "/Users/sara/Projects/parallel/supabase/schema.sql"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E6-S2",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/views/Week.tsx 全文 54 行：第 39-42 行 `page-h` 只有 上周/本周/下周 三个 chip、日期范围文案和「+ 任务」按钮，没有 本周计划/已完成/逾期 计数条，也没有 全部/我的/客户 切换（Week 组件没有任何 filter state）；第 18-23 行只有 `unscheduled` 和拖拽 `drop`，没有批量挪逾期的函数，grep `confirm` 在 Week.tsx 无命中；第 24-28 行 `Card` 组件只渲染标题+标签，`draggable` + `onDragStart` 是唯一改期手段，没有「移到…」按钮，也没有 +1 天/下周同日/未排期 菜单。/Users/sara/Projects/parallel/src/styles.css 第 229 行 `.week{display:grid;grid-template-columns:repeat(7,minmax(130px,1fr)) minmax(150px,1fr);overflow-x:auto}`，第 246-256 行的 640px 媒体块只处理 tabbar/toast/lane-grid，没有把 .week 改成纵向列表的规则，手机上仍是横向滚动的 8 列且 HTML5 drag 在触屏失效。/Users/sara/Projects/parallel/src/App.tsx 第 23 行 hashchange 监听只做 `setRoute(parse())`，grep `scrollTo` 全 src 无命中。",
+     "adjustment": "完全未做，按原范围保留。可缩减：「全部/我的/客户」切换里的「客户」维度依赖 E2-S2 的客户字段，若 E2 未先落地则先做 全部/我的 两态；「选日期」项可直接复用已有 TaskDialog（Week.tsx 第 51 行已挂载，点卡片即可改 due）而不新做日期选择器，「移到…」菜单只保留 +1 天/下周同日/未排期 三个一键项。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Week.tsx",
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css",
+      "/Users/sara/Projects/parallel/src/lib/util.ts"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E6-S3",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/views/Board.tsx 第 12 行 `useState<'all' | 'product' | 'ops'>('all')`、第 24 行三个 chip 全部/产品/运营，第 15 行 `list = tasks.filter(x => filter === 'all' || projects.find(...)?.type === filter)`——只有按项目类型过滤，没有客户下拉、渠道 chips、负责人筛选；全 src grep `localStorage` 无命中，筛选值不持久化。第 27-28 行完成列 `items = list.filter(x => x.status === st)` 无任何 done_at 时间窗或例行任务排除，完成列会无限累积，列头第 33 行只显示 title+count 没有「显示全部」。第 36-37 行卡片只渲染 PriTag/标题/ProjTag/WhoTag/DueTag，没有客户名与附件数（types.ts 的 Task 也没有 client/attachment 字段可供显示）。触控目标：/Users/sara/Projects/parallel/src/styles.css 第 60 行 `.btn.sm{padding:3px 8px;font-size:12px}`、第 69 行 `.chip{padding:3px 11px;font-size:12px}`、第 113 行 `.cb{width:16px;height:16px}`，均远小于 32px 且 640px 媒体块（第 246-256 行）没有放大规则；第 202 行 `dialog{max-height:90vh}` 但无 overflow-y:auto，内容超高时不可滚动。此外看板改状态依赖第 35 行 HTML5 `draggable`，触屏失效，但第 38-41 行已有 ←/→ 按钮作为手机替代。",
+     "adjustment": "完全未做，按原范围保留，但三条验收里「客户下拉」「卡片显示客户名与附件数」强依赖 E2-S2（客户/渠道字段）与文件台史诗（附件），若那两者未先做，本故事先落地：负责人筛选 + 渠道 chips（可暂用 project.type）+ localStorage 持久化 + 完成列 14 天收敛 + 触控目标 CSS，客户名/附件数留到依赖就绪后补一行渲染。「非例行任务」的判断需明确定义（目前 tasks 无 routine 标记，routines 表只生成 reminders 不生成 tasks），可先只做 14 天窗口。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Board.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/src/components/Tags.tsx"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E8",
+   "stories": [
+    {
+     "id": "E8-S1",
+     "status": "未做",
+     "evidence": "全仓库（src/、supabase/、README.md）grep 'weekly|周报|clients|docs|files|createDoc|clipboard' 无任何命中。supabase/schema.sql 只有 profiles/workspaces/workspace_members/invitations/projects/project_members/tasks/reminders 8 张表，supabase/routines.sql 加 routines，没有 clients / docs / files / logs 表，所以「按客户→项目分组」「各客户 log」「本周新增交付物文件」「createDoc(kind=weekly)」四个数据源全部不存在。src/state/store.tsx 的 Actions 类型（L13-33）只有 upsertProject/upsertTask/sendReminder/upsertRoutine 等，没有 createDoc；src/App.tsx 的 nav 数组（L27）只有 today/week/board/projects/inbox/members 六个路由，没有 #clients。可复用的仅有：tasks.done_at 列（supabase/schema.sql:70，写入点 src/components/Dialogs.tsx:21、src/components/TaskRow.tsx:13、src/views/Board.tsx:19）、src/lib/util.ts 的 todayStr/addDays 日期工具、src/views/ProjectDetail.tsx 的 seg 切换按钮样式与 marked 渲染（renderMd L10）、store 的 toast。",
+     "adjustment": "完全未做且三个前置（E3-S4 客户、E4-S4 文档、E5-S2 日志）在代码里均无踪迹，本故事保持原样但必须排在它们之后。建议把验收拆成两档以降低阻塞：(1) 先做不依赖 clients/docs/logs 的最小版——用内存里的 tasks 按 done_at 落在本周（用 util.ts 的 todayStr/addDays 算周一到周日）按 project 分组生成 Markdown，「复制为 Markdown」到剪贴板（navigator.clipboard.writeText），放在现有 #projects 页顶部即可，这一步 1h 内可上线且现在就有真实数据；(2) 客户维度分组、各客户 log 条目、本周新增文件、createDoc 落库并跳转，等 E3/E4/E5 落地后再补。「第 N 周」编号可直接用 ISO 周数。上线前提「至少两周日志」保留。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/lib/weekly.ts（新建：聚合本周 done_at 任务 + 日志 + 文件生成 Markdown）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（新增 createDoc action，依赖 E4 docs 表）",
+      "/Users/sara/Projects/parallel/src/views/Clients.tsx（依赖 E3 新建，加「生成本周周报」按钮）",
+      "/Users/sara/Projects/parallel/src/views/ClientDetail.tsx（依赖 E3 新建，文档 tab 加「生成该客户周报」「复制为 Markdown」）",
+      "/Users/sara/Projects/parallel/src/views/Projects.tsx（最小版落点：按项目分组的本周完成 Markdown 复制）",
+      "/Users/sara/Projects/parallel/src/lib/util.ts（加 weekRange / isoWeek 工具）",
+      "/Users/sara/Projects/parallel/supabase/schema.sql（docs 表 kind 字段需含 weekly，依赖 E4）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E8-S2",
+     "status": "未做",
+     "evidence": "grep 'search|搜索|metaKey|ctrlKey|ilike|orphan|孤儿|storage|bucket' 在 src/ 与 supabase/ 均无命中：src/App.tsx 顶栏（L31-37）只有 brand、nav、spacer、「安装应用」按钮，没有搜索按钮；全仓库没有任何 keydown 监听（无 ⌘K）；src/components/Modal.tsx 是通用 <dialog> 壳，只被 Dialogs.tsx 的任务/项目/阶段/提醒对话框使用，没有搜索 Modal；src/state/store.tsx loadAll（L74-83）只拉 8 张表，没有 docs/files/clients；supabase/*.sql 里没有 storage bucket、storage.objects 策略，README 也没提 Storage，故「docs.body ilike」和「清理孤儿对象」的服务端对象完全不存在。可复用：store 已把全部 projects/tasks 常驻内存（State L7-12），本地匹配 projects.name / tasks.title 零成本；Modal.tsx 可作为搜索弹层容器；App.tsx 的 hash 路由（parse L13，#p/:id）可作为跳转目标。",
+     "adjustment": "完全未做。建议缩减并拆分：(1) 搜索 Modal 先做本地版——匹配内存里的 projects.name / tasks.title（现有数据），clients.name / docs.title / files.name 三组随 E3/E4 落地后各加一行 filter 即可，分组显示 + 上下键/回车跳转、⌘K 与手机顶栏按钮在 App.tsx 加；这部分不依赖任何新表，可立即做。(2) 「回车无本地结果时追加 docs.body ilike」依赖 E4 docs 表，等 E4 后补一个 store.searchDocs 即可，不要为此阻塞 Modal。(3) 「清理孤儿对象」与搜索无关，且依赖 E4-S4 的 Storage bucket 与 files 表，建议从本故事移出、并入文件功能所在史诗（E4）作为 owner 维护项，否则本故事验收会被文件史诗进度拖住。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/components/SearchModal.tsx（新建：输入框、分组结果、键盘导航）",
+      "/Users/sara/Projects/parallel/src/App.tsx（全局 keydown 监听 ⌘K/Ctrl+K，顶栏与手机 tabbar 加搜索按钮，挂载 SearchModal）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（新增 searchDocs（docs.body ilike，依赖 E4）与 cleanOrphanFiles（storage.list 对比 files.path，依赖 E4-S4））",
+      "/Users/sara/Projects/parallel/src/styles.css（搜索弹层与结果分组样式）",
+      "/Users/sara/Projects/parallel/supabase/schema.sql 或新建 supabase/files.sql（storage.objects 的 owner list/delete 策略，依赖 E4-S4）",
+      "/Users/sara/Projects/parallel/src/views/Files.tsx（依赖 E4 新建，文件 seg 放「清理孤儿对象」按钮）"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E1",
+   "stories": [
+    {
+     "id": "E1-S1",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/supabase/schema.sql 第 245-259 行只有 `alter publication supabase_realtime add table ...`（projects/tasks/reminders/project_members/workspace_members），全文 grep 无任何 `replica identity` 语句；routines.sql 第 57-59 行同样只加 publication。/Users/sara/Projects/parallel/src/state/store.tsx 的 realtime useEffect（约第 99-123 行）订阅列表硬编码为 `['projects','tasks','reminders','project_members','workspace_members']`，无 routines；refetch(table) 只有 projects/tasks/reminders/project_members 四个分支，其余走 loadAll；`ch.subscribe()` 未传状态回调；全文 grep `visibilitychange`、`'online'` 均无命中。loadAll 与 refetch 全部写成 `(data || [])` 不解构 error，也没有「同步失败」toast。git log 最新提交 20dd2e8（9/14），工作树干净，无相关未提交改动。",
+     "adjustment": "保持原故事不缩减。补充两点实现细节：(1) project_members 订阅本来就没有 filter，不需要 replica identity full 也能收到 DELETE，迁移里可只对 projects/tasks/reminders/workspace_members/routines 五张表加语句；(2) store 已有独立的 loadRoutines 函数（第 202 行），refetch 的 routines 分支可直接复用它，不必新写查询。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/migrations/001_replica_identity.sql（新建）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（loadMembership / loadAll / refetch / realtime useEffect / ch.subscribe）",
+      "/Users/sara/Projects/parallel/README.md"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E1-S2",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/state/store.tsx loadMembership（第 66-71 行）仍是 `.eq('user_id', user.id).order('created_at').limit(1)` 取最早一条，useCallback 依赖是 `[user]` 对象而非 `user?.id`。/Users/sara/Projects/parallel/supabase/schema.sql handle_new_invitation（第 138-150 行）用 `select id into uid from profiles where lower(email) = lower(new.email)` 匹配，不查 auth.users；profiles_update 策略（第 179-180 行）只有 `using (id = auth.uid())` 没有 with check，也没有禁止改 email 的 before update 触发器。/Users/sara/Projects/parallel/supabase/routines.sql 全文 grep `revoke` 无命中，run_routines() 默认对 anon/authenticated 可 RPC。README「第一次使用」段没有关闭注册的说明，仍建议关掉 Confirm email。",
+     "adjustment": "保持原故事。loadMembership 改造建议明确为：拉全部 membership 后 `find(m => m.role==='member') ?? data[0]`，避免只按 role 排序时多个 owner 工作区顺序不定；同时把 useEffect `[ready, user?.id, reload]` 的 reload 依赖链一起换成 user?.id，否则 TOKEN_REFRESHED 仍会触发全量重载。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/state/store.tsx（loadMembership）",
+      "/Users/sara/Projects/parallel/supabase/migrations/002_auth_hardening.sql（新建：handle_new_invitation 改查 auth.users、profiles email 触发器、revoke execute on run_routines）",
+      "/Users/sara/Projects/parallel/README.md（第一次使用 + 关闭注册说明）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E1-S3",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/state/store.tsx 第 113-118 行仍是 `try { new Notification('平行线提醒', { body: r.message }); } catch { }`，无 tag，无 serviceWorker.ready；全文 grep `showNotification`、`serviceWorker` 无命中。/Users/sara/Projects/parallel/src/App.tsx 只有 beforeinstallprompt 安装按钮（第 18-22、36 行），grep `standalone`、`iPhone`、`localStorage` 全 src 无命中，无 iOS 引导条。/Users/sara/Projects/parallel/src/views/Inbox.tsx 第 13、18 行 `canNotify = typeof Notification !== 'undefined'`，`{canNotify && perm !== 'granted' && <p className=\"hint\">...}`——不支持时整段隐藏，无说明。/Users/sara/Projects/parallel/src/main.tsx 只有 `registerSW({ immediate: true })`，无 onRegisteredSW、无 setInterval update、无 visibilitychange。",
+     "adjustment": "保持原故事。注意 vite.config.ts 是 generateSW + autoUpdate，加周期 r.update() 后新版本会无预警 reload；可在实施时顺带评估是否改 registerType:'prompt' 用现有 toast 提示（属于可选加项，不扩故事范围）。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/state/store.tsx（realtime 回调中的通知）",
+      "/Users/sara/Projects/parallel/src/App.tsx（iOS 引导条）",
+      "/Users/sara/Projects/parallel/src/views/Inbox.tsx（canNotify 为 false 时的说明）",
+      "/Users/sara/Projects/parallel/src/main.tsx（registerSW onRegisteredSW 周期更新）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E1-S4",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/state/store.tsx Actions 类型只有 upsertProject / upsertTask（第 18、20 行），grep `updateTask`、`updateProject` 无命中；upsertProject 用 `supabase.from('projects').upsert(row)` 整行写回。调用方全部整行传：/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx onPrd 第 32 行 `upsertProject({ ...p, prd: v })`、toggleStage 第 38 行与 setStageDue 第 40 行 `upsertProject({ ...p, stages: st })`、rename 第 46 行；/Users/sara/Projects/parallel/src/views/Board.tsx 第 19 行 `upsertTask({ ...t, status: to, done_at })`；/Users/sara/Projects/parallel/src/components/TaskRow.tsx 第 13 行 `upsertTask({ ...t, status, done_at })`；/Users/sara/Projects/parallel/src/views/Week.tsx 第 22 行 `upsertTask({ ...task, due })`。/Users/sara/Projects/parallel/src/views/Today.tsx 第 15 行 `ps = projects.filter(p => !p.archived)`，第 49 行 select 直接 `ps.map`，未用 canEdit 过滤（对比 Dialogs.tsx 第 25 行 editableProjects 已过滤）。/Users/sara/Projects/parallel/src/components/Dialogs.tsx TaskDialog：项目 select（第 31-34 行）无 disabled 且 option 只含 editableProjects；删除按钮（第 57 行）条件是 `!isNew && editable`（editable = canEditTask，负责人为 true，与 RLS t_delete 不一致），onClick 直接 deleteTask 无 confirm（全文 confirm 只出现在 ProjectDialog 第 99 行和 Members.tsx 第 21 行）。ProjectDetail.tsx grep `updated_at`、`对方` 无命中，无「对方刚改过」提示。",
+     "adjustment": "保持原故事，把 Week.tsx 拖拽改截止日也纳入「只传变化字段」的调用方清单（蓝图漏列）。删除按钮条件可直接写成 `isOwner || canEdit(task.project_id) || (!task.project_id && task.created_by === user.id)`，或在 store 增加 canDeleteTask 一并给 TaskRow/Board 复用。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/state/store.tsx（新增 updateProject / updateTask，upsert 仅新建）",
+      "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx（onPrd / toggleStage / setStageDue / rename、远端 updated_at 检测）",
+      "/Users/sara/Projects/parallel/src/views/Board.tsx（move）",
+      "/Users/sara/Projects/parallel/src/views/Week.tsx（drop 改 due）",
+      "/Users/sara/Projects/parallel/src/components/TaskRow.tsx（toggle）",
+      "/Users/sara/Projects/parallel/src/views/Today.tsx（第 49 行项目下拉 canEdit 过滤）",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog 项目下拉 disabled、删除 confirm、删除按钮条件）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E1-S5",
+     "status": "未做",
+     "evidence": "`ls /Users/sara/Projects/parallel/supabase` 只有 schema.sql 和 routines.sql，`supabase/migrations` 目录不存在。`.github/workflows` 只有 deploy.yml，无 keepalive.yml；deploy.yml 触发器只有 `push: branches [main]` 和 `workflow_dispatch`，无 pull_request，只有 build + deploy 两个 job。/Users/sara/Projects/parallel/README.md 「第一次部署 → 1. Supabase」第 2 步只让执行 schema.sql，未提 routines.sql（而 schema.sql 末行注释「定时提醒见 routines.sql，需在本文件之后执行」）；第 4 步写「anon public key」、GitHub 段第 3 步写「publishable key」，用词不一；无「线上已执行到 NNN」记录；无 7 天暂停说明；「还没做的」仍列花园视觉（20dd2e8 已实现），功能列表未提本周/花园/定时提醒。",
+     "adjustment": "保持原故事。建议 migrations 编号从 001 起而不是重排 schema.sql/routines.sql（两者视为基线 000），README 记录格式「基线：schema.sql + routines.sql（2026-09-14）；migrations 已执行到 00N」。keepalive 用 `curl -s \"$SUPABASE_URL/rest/v1/\" -H \"apikey: $KEY\"`，URL 与 key 可直接从 .env.production 读（已公开），不需要 Secrets。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/migrations/（新建目录）",
+      "/Users/sara/Projects/parallel/.github/workflows/keepalive.yml（新建）",
+      "/Users/sara/Projects/parallel/.github/workflows/deploy.yml（加 pull_request 触发的 build-only job）",
+      "/Users/sara/Projects/parallel/README.md（部署顺序、routines.sql、key 用词、7 天暂停、权限口径、功能列表、还没做清单）"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E5",
+   "stories": [
+    {
+     "id": "E5-S1",
+     "status": "未做",
+     "evidence": "1) 数据层：/Users/sara/Projects/parallel/supabase/routines.sql:4-17 的 routines 表只有 to_user/created_by/message/hour/minute/weekdays/tz/active/last_fired，没有 mode / project_id / client_id / task_title；schema.sql:60-73 的 tasks 表没有 routine_id；schema.sql:75-85 的 reminders 表没有 routine_id。项目里不存在 migrations 目录（ls migrations supabase/migrations 均 No such file），只有 schema.sql + routines.sql 两个整段执行的脚本。2) run_routines()（routines.sql:31-48）只有一个分支：命中就 insert into reminders(...) 并回写 last_fired，没有 mode='task' 分支；loop 体没有 begin…exception 隔离；没有 tz 校验触发器。注意：「reminder 分支同一 routine 同日只插一条」已由 routines.sql:39 的 `r.last_fired is null or r.last_fired < local_now::date` 保证，现状已满足。3) 前端：/Users/sara/Projects/parallel/src/components/Routines.tsx:23-31 表单只有 收件人/消息/时间/周几，没有「生成为任务」开关、任务标题、客户/项目；列表（第 32-42 行）只有「暂停/启用」「删除」，没有「编辑」回填。types.ts:21-24 的 Routine 类型同样无新字段。4) ro_update / ro_delete（routines.sql:26,28）仍是 `created_by = auth.uid() or is_ws_owner(workspace_id)`，未放宽 to_user；前端 canManage（Routines.tsx:18）同逻辑。5) store.tsx:203-208 upsertRoutine 只 upsert 传入字段，未把 last_fired 设为创建日，创建当天已过时刻会在下一个 10 分钟周期立即触发（routines.sql:37-39）。6) 有利条件：store.tsx:109-112 已实时订阅 tasks 表，cron 生成的任务会自动推到 Miranda 端，无需额外接线；但 routines 表未订阅（store.tsx:109 列表里没有 'routines'），对方新建/编辑的规则要刷新才看到。",
+     "adjustment": "整体保留，但可缩减两处：(a) 验收里「reminder 分支同一 routine 同日只插一条」已由现有 last_fired 判定满足，删掉该条；(b) client_id 依赖 E2-S1 的 clients 表，若 E2 未先落地，本故事先做 mode/project_id/task_title + tasks.routine_id + reminders.routine_id，client_id 留到 E2 合并时加一列。补充两点建议进任务：把 'routines' 加进 store.tsx:109 的 realtime 订阅列表（一行）；migrations 目录是新建的，README 部署步骤要同步加「执行 007」。估时 5h 合理。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/migrations/007_routine_task.sql（新建）",
+      "/Users/sara/Projects/parallel/supabase/routines.sql（run_routines 重写、ro_update/ro_delete 放宽）",
+      "/Users/sara/Projects/parallel/src/components/Routines.tsx（表单开关/任务标题/项目下拉、编辑回填）",
+      "/Users/sara/Projects/parallel/src/lib/types.ts（Routine/Task/Reminder 加字段）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（upsertRoutine 设 last_fired、realtime 订阅 routines）",
+      "/Users/sara/Projects/parallel/README.md（部署步骤加 007）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E5-S2",
+     "status": "未做",
+     "evidence": "1) /Users/sara/Projects/parallel/src/views/Today.tsx:17-22 的分组只有 over/today/doing/soon/doneToday，第 53 行渲染 已逾期/今天/进行中/未来 7 天/今天完成，没有「例行」分组；tasks 也没有 routine_id 可判定。2) Today.tsx:41-44 项目卡显示 p.name、curStage、TYPES[p.type]、待办数，没有客户名；全代码库 grep 'client' 无任何结果，客户概念不存在（依赖 E2）。3) Today.tsx:39 `<Garden projects={ps} tasks={tasks} />` 传的是未筛选的全量 tasks，而第 16 行的 `all` 才是「只看我的」筛选结果——Garden 目前不随筛选变化，且 Garden.tsx:8 的 doneToday 直接用传入的 tasks 计算，故只需把第 39 行改为 `tasks={all}` 即可满足「Garden 接收筛选后的任务」。4) /Users/sara/Projects/parallel/src/views/Board.tsx:15,28 完成列 `list.filter(x => x.status === st)` 无任何隐藏逻辑。5) 「未巡检」判定需要客户 log 文档 updated_at（E2-S3 的文档）和例行任务 done_at，两者均不存在。",
+     "adjustment": "保留但拆成两层：核心（不依赖 E2）= Today 例行分组置顶 + Garden 传 `all`（一行改动，Today.tsx:39）+ Board 完成列默认隐藏 routine_id 非空任务（可加「显示例行」chip）；依赖 E2-S3 的部分 = 项目卡客户名 + 客户卡未巡检判定，若 E2-S3 未排期先不做。Garden 传参那 1h 估时可压到 0.2h。同时顺手修 maps.json 提到的 Today.tsx:49 快速添加下拉未按 canEdit 过滤的问题（`ps.filter(p => canEdit(p.id))`）。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Today.tsx（例行分组、项目卡客户名、Garden 传 all、快速添加下拉过滤）",
+      "/Users/sara/Projects/parallel/src/views/Board.tsx（完成列隐藏例行任务）",
+      "/Users/sara/Projects/parallel/src/components/Garden.tsx（若要区分例行完成的小花样式，可选）",
+      "/Users/sara/Projects/parallel/src/components/TaskRow.tsx（例行任务标签，可选）",
+      "E2 落地后：客户卡组件（未巡检判定）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E5-S3",
+     "status": "未做",
+     "evidence": "1) /Users/sara/Projects/parallel/src/views/Inbox.tsx:11-12 只按 to_user/from_user 拆成「收到的/发出的」两列，第 21-27 行是平铺列表，没有类型分组、没有折叠、没有「最近 7 天」过滤；页面上只有逐条的「标为已读/删除」（第 26 行），没有批量按钮。2) /Users/sara/Projects/parallel/src/state/store.tsx:197-200 markRead 先 setReminders 再 `await supabase...update`，不取 error、不回滚；第 201 行 deleteReminder、第 209 行 deleteRoutine 同样先改本地再写库，无错误处理。Actions 类型（store.tsx:13-34）没有任何批量函数。3) 指派通知 store.tsx:163-164 `supabase.from('reminders').insert({...}).then(() => {})`，fire-and-forget，不 await、不 toast。4) 分组所需的判定字段：reminders 现只有 task_id（schema.sql:81）可区分「关联任务」，routine_id 要等 E5-S1；「关联文档文件」类型的提醒在当前代码里不存在（无文档/文件功能）。5) RLS 允许批量：schema.sql 的 r_update using to_user = auth.uid()，r_delete using to_user 或 from_user，所以 `update({read:true}).eq('to_user', uid).eq('read', false)` 与 `delete().eq('to_user', uid).eq('read', true).lt('created_at', 7天前)` 可直接走表，不需要新 RPC。",
+     "adjustment": "保留。分组规则改为按现有字段推导而非新增类型列：routine_id 非空→例行（依赖 S1），task_id 非空→指派/关联任务，其余→其他；「关联文档文件」分组等文件/文档史诗落地后再加一个分支，不要为它单独建字段。乐观回滚三处 + 指派通知 await 合并成一个 0.5h 小任务即可。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Inbox.tsx（分组渲染、默认折叠、两个批量按钮）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（markAllRead / clearOldRead 批量函数；markRead/deleteReminder/deleteRoutine 回滚+toast；upsertTask 指派通知 await+toast）",
+      "/Users/sara/Projects/parallel/src/styles.css（分组标题/折叠样式）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E5-S4",
+     "status": "未做",
+     "evidence": "1) /Users/sara/Projects/parallel/src/components/Dialogs.tsx:8-65 的 TaskDialog 表单只有 标题/项目/截止/负责人/状态/优先级/备注 和 删除/取消/保存 按钮，没有「提醒负责人」入口，也没有引入 ReminderDialog。2) 验收前提成立：ReminderDialog（Dialogs.tsx:142）已接受 `preset?: { to?, message?, taskId? }`，第 146 行 open 时用 preset 回填 to/message，第 149 行把 preset.taskId 传给 sendReminder；但全代码库只有 Inbox.tsx:36 使用 ReminderDialog 且未传 preset，preset 从未被用到。3) 需注意的边界：ReminderDialog 第 144 行 `others = members.filter(m => m.user_id !== user?.id)` 排除自己，若任务负责人是当前用户本人，preset.to 不在下拉选项里，会出现空选中——按钮逻辑应在 assignee 为空或为自己时都走「提醒对方」默认另一位成员。4) TaskDialog 本身在 Modal 内，需确认 /Users/sara/Projects/parallel/src/components/Modal.tsx 支持两层叠放（z-index/点击遮罩关闭只关内层）。",
+     "adjustment": "保留，0.5h 估时准确，纯接线。实现要点：TaskDialog 加 `const [remind, setRemind] = useState(false)`，编辑态（!isNew）且 members.length ≥ 2 时显示按钮，preset.to = (assignee_id 存在且 ≠ 自己) ? assignee_id : 另一位成员，message 预填「关于「标题」：」，taskId = task.id；按钮文案按 assignee 情况切换「提醒负责人/提醒对方」。若 Modal 不支持叠放，改为关闭 TaskDialog 后再开 ReminderDialog。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog 加按钮与 ReminderDialog 挂载）",
+      "/Users/sara/Projects/parallel/src/components/Modal.tsx（确认双层 Modal 叠放，必要时加 z-index）"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E3",
+   "stories": [
+    {
+     "id": "E3-S1",
+     "status": "部分已做",
+     "evidence": "编辑器逻辑已存在但内联在 /Users/sara/Projects/parallel/src/views/ProjectDetail.tsx 里，没有独立组件：renderMd()（L10-12，marked.parse + 仅把 < 转义，未过滤 javascript: 链接）；onPrd()（L30-33）已有 800ms 防抖 + 「已保存 hh:mm」/「保存失败」hint（存到 setHint）；L24 的 useEffect 用 document.activeElement?.id !== 'prd' 实现「聚焦时忽略远端覆盖」；L64-68 已有 编辑/预览 seg（className=\"seg\"）与 textarea#prd.prd-ta。样式 /Users/sara/Projects/parallel/src/styles.css L164 .prd-ta{width:100%}，L157-158 .detail 在 900px 以下单列，手机全宽已满足。缺：src/components/MdEditor.tsx 不存在（find src 无此文件）；没有 updatedAt 比对与「对方刚改过」黄字；renderMd 未过滤 javascript: 协议；保存走 upsertProject({...p, prd}) 整行写回（store.tsx upsertProject）。",
+     "adjustment": "缩减为「搬家 + 两个小补丁」：把 ProjectDetail L10-12/L20-24/L30-33/L64-68 原样抽到 src/components/MdEditor.tsx（props {value, updatedAt, onSave, readOnly}），ProjectDetail 只保留调用；新增两点：(1) 收到 updatedAt 变化且 textarea 聚焦时显示黄字；(2) renderMd 用 marked renderer.link 或正则把 href 以 javascript:/data: 开头的链接改为 #。验收里「手机端 textarea 全宽、seg 保留」已满足可删。估时可从 4h 降到 2.5h。注意抽取时 onSave 应只传 text，由调用方决定字段级 update（见 E3-S2 的 updateDoc），不要沿用整行 upsert。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/components/MdEditor.tsx",
+      "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E3-S2",
+     "status": "未做",
+     "evidence": "grep -rn -i 'docs|append_log|appendLog|DOC_TPL|DOC_KINDS' src supabase 无任何命中。仓库没有 migrations/ 目录，只有 /Users/sara/Projects/parallel/supabase/schema.sql（9 张表：profiles/workspaces/workspace_members/invitations/projects/project_members/tasks/reminders）和 supabase/routines.sql（routines 表 + run_routines()）。/Users/sara/Projects/parallel/src/lib/util.ts 只有 TYPES/STAGE_TPL/PRD_TPL 常量，无 DOC_TPL/DOC_KINDS。/Users/sara/Projects/parallel/src/state/store.tsx 的 State 只含 members/invitations/projects/tasks/projectMembers/reminders/routines，loadAll()（L75-95）拉 8 张表，Actions 无 loadDocBody/createDoc/updateDoc/appendLog。/Users/sara/Projects/parallel/src/lib/types.ts 无 Doc 类型。",
+     "adjustment": "全新实现。可复用现有模式：RLS 用 schema.sql L92-111 的 is_ws_member/is_ws_owner/can_edit_project；updated_at 用 touch_updated_at 触发器（schema.sql L155-159）；publication 加表照 schema.sql L245-259 的 do $$ 块写法；实时订阅要把 'docs' 加进 store.tsx L108 的表数组并在 refetch 分支加对应重拉。注意：蓝图要求 client_id 挂靠，但 clients 表属于 E2-S1 且当前代码里完全没有 clients 概念（grep 'client' 只命中 react-dom/client 与 createClient），故 005_docs.sql 的挂靠 check 与 appendLog(clientId) 必须等 E2-S1 落地；若 E2 延后，可先只做 project_id 挂靠 + 工作区级文档，client_id 列留 nullable。建议顺手把 SQL 文件按蓝图放到 supabase/ 目录（现有约定），而非新建 migrations/。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/005_docs.sql",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/src/lib/util.ts",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/README.md"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E3-S3",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/App.tsx L13 parse() 只识别 'p/' 前缀（{v:'project', id}），其余 hash 直接作为视图名，无 'd/' 分支；L39 路由渲染只有 week/board/projects/project/members/inbox/today。src/views/ 下无 DocDetail.tsx。/Users/sara/Projects/parallel/src/components/Dialogs.tsx L142 ReminderDialog 的 preset 类型为 { to?; message?; taskId? }，L149 sendReminder 只传 taskId；store.tsx sendReminder 签名 (to, message, taskId, remindAt)，reminders 表（schema.sql L75-85）无 doc_id/file_id 列。标题 contentEditable 的写法可参考 ProjectDetail.tsx L58 与 styles.css L155-156 已有样式。",
+     "adjustment": "全新实现 DocDetail.tsx。可复用：标题 contentEditable 模式（ProjectDetail.tsx L58 + rename()）、头部 .ph/.row/.tag 样式、Modal/ReminderDialog。ReminderDialog preset 扩展 docId 需要同时给 reminders 表加 doc_id 列（或用 message 带 #d/:id 链接的轻量做法，不改表——两人用建议后者，可省 0.5h 与一次迁移）。「附件区占位」可直接省略，等 E4-S3 时再加。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/DocDetail.tsx",
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E3-S4",
+     "status": "未做",
+     "evidence": "代码里没有客户页：grep -rn 'client' src 只命中 src/main.tsx 的 react-dom/client 和 src/lib/supabase.ts 的 createClient；App.tsx L28 导航为 today/week/board/projects/inbox/members 六项，无 #clients；schema.sql 无 clients 表。日志相关的 appendLog/「记一笔」/绿勾均不存在。",
+     "adjustment": "完全依赖 E2-S4（客户页）与 E3-S2（docs 表 + append_log），当前无任何可复用的客户页骨架。若 E2 先落地，本故事新建 tab 组件即可；「未巡检」判定读 log 文档 updated_at 这条要与 E2 的客户卡实现方协调字段来源。建议保留但排在 E2 之后；「日志 tab」是 Miranda 每天用的入口，优先级高于「文档 tab」，可拆成先做日志、后做文档分组。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/ClientDetail.tsx",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E3-S5",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx L70-88 右侧 .side 只有三个 panel：任务（L71-74）、阶段计划（L75-82）、协作者（L83-87，owner 可见），无「文档」panel。toggleStage()（L34-39）勾完最后阶段后无任何钩子，不检查 kind=review 文档。src/views/Projects.tsx 是按 product/ops 两条 lane 的项目列表，无「文档」seg；App.tsx 无 #clients 路由。util.ts 的 STAGE_TPL.ops 最后一阶段为「复盘」，可作为钩子判定依据。",
+     "adjustment": "全新实现，但可缩减：ProjectDetail 文档 panel 复用现有 .panel/.hd/.bd 结构与任务 panel 的列表样式；复盘钩子只需在 toggleStage 成功后判断 p.type==='ops' && st.every(done) && 无 review 文档 → 在 panel 顶部渲染按钮（不要在勾选时自动弹窗）。「#clients 文档 seg 全量视图」依赖 E2 的 #clients 页面，若 E2 延后可暂时把全量文档视图挂到 #projects 页作为第三个 seg（Projects.tsx 已有 page-h 头部），或直接砍掉这条验收，只保留项目内 panel。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx",
+      "/Users/sara/Projects/parallel/src/views/Projects.tsx",
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E3-S6",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/supabase/schema.sql L59-73 tasks 表列为 id/workspace_id/project_id/title/due/status/priority/note/assignee_id/created_by/done_at/created_at/updated_at，无 doc_id；/Users/sara/Projects/parallel/src/lib/types.ts L9-13 Task 类型同样无 doc_id。src 下无任何 '- [ ]' 解析或 '(task:' 回写逻辑（grep 无命中）。TaskRow 组件已存在（/Users/sara/Projects/parallel/src/components/TaskRow.tsx，props {t, hideProj, onEdit}）可直接复用。package.json 无 vitest/jest，仓库无 *.test.* 文件，「单元测试覆盖 6 个用例」需先引入测试框架。",
+     "adjustment": "全新实现。可缩减：(1) 批量建任务直接循环调用现有 store.upsertTask({title, project_id, assignee_id: user.id, doc_id})，不需要新的批量 API；(2) 解析函数写成纯函数放 util.ts（extractTodoLines / rewriteWithTaskIds），便于测试；(3) 测试要求可降为「引入 vitest + 一个测试文件」，或两人用的场景下先不加测试框架、以手工用例代替，节省 devDependencies 与 CI 改动；(4) 「由此生成的任务」列表 = tasks.filter(t => t.doc_id === id).map(TaskRow)，1h 内可完成。tasks.doc_id 迁移可与 005_docs.sql 合并成一个 SQL 文件，减少一次手工执行。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/005_docs.sql",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/src/lib/util.ts",
+      "/Users/sara/Projects/parallel/src/views/DocDetail.tsx",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/package.json"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E2",
+   "stories": [
+    {
+     "id": "E2-S1",
+     "status": "未做",
+     "evidence": "全仓库无任何 client/clients 痕迹：grep -rniE 'client|channel' src supabase 只命中 react-dom/client 与 supabase.removeChannel。/Users/sara/Projects/parallel/supabase/schema.sql 只有 profiles/workspaces/workspace_members/invitations/projects/project_members/tasks/reminders 8 张表（第 7-85 行 create table），routines.sql 加第 9 张，没有 clients 表；仓库没有 migrations/ 目录（ls migrations 报 No such file）。/Users/sara/Projects/parallel/src/lib/types.ts 只导出 Project/Task/Member/ProjectMember/Reminder/Invitation/Routine，无 Client。/Users/sara/Projects/parallel/src/state/store.tsx 的 State 类型（第 7-12 行）无 clients；loadAll（第 73-92 行）Promise.all 只拉 8 张表；realtime 订阅列表（第 109 行）为 ['projects','tasks','reminders','project_members','workspace_members']；Actions 中无 upsertClient/updateClient/deleteClient。可复用现成件：schema.sql 第 154-159 行的 updated_at touch 触发器函数、第 92-111 行 is_ws_member/is_ws_owner 权限基元、第 245-259 行的 publication 写法。",
+     "adjustment": "保持故事不缩减。落地时注意三点：(1) 现状没有 migrations/ 目录且 README 部署步骤是整段贴 schema.sql，若 E1-S1 未先建 migrations 机制，可先把 003_clients.sql 放在 supabase/ 下并在 README 加执行顺序；(2) touch 触发器直接复用 schema.sql 已有的 set_updated_at 函数，不必重写；(3) store 现有写法全是整行 upsert（upsertProject 第 140-147 行），updateClient 应按蓝图做字段级 .update({...}).eq('id')，为 E2-S4 备注保存与并发覆盖问题打底；realtime 除加 'clients' 外，refetch（第 102-108 行）要加对应分支，且 DELETE 事件依赖 replica identity full（E1-S4）。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/schema.sql",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/README.md"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E2-S2",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/supabase/schema.sql 第 38-50 行 projects 表列只有 workspace_id/name/type/goal/stages/prd/archived/created_by/created_at/updated_at，无 client_id/channels/links/template。/Users/sara/Projects/parallel/src/components/Dialogs.tsx ProjectDialog（第 68-107 行）表单仅名称/类型/一句话目标三项，无客户下拉、渠道 chips、链接行编辑。/Users/sara/Projects/parallel/src/views/Projects.tsx 卡片（第 18-22 行）只显示 name/goal/Stepper mini/待办数/协作者/PRD 字数，无客户 tag、渠道 chips，也无「按客户分组」开关或 localStorage 读写。/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx 头部（第 50-60 行）只有返回按钮、类型 tag、当前阶段、只读 tag、设置/编辑阶段按钮，无客户/渠道/链接 chips。/Users/sara/Projects/parallel/src/components/Tags.tsx 只有 ProjTag/DueTag/PriTag/WhoTag 四个，无 ClientTag/ChannelTag。",
+     "adjustment": "保持故事。可复用：styles.css 第 68-78 行已有 .chips/.chip/.chip.on 与 .tag.* 样式，ClientTag/ChannelTag 直接套 .tag 加新色即可；链接行编辑器（label+url 增删）与 E2-S3 ClientDialog 是同一个组件，建议抽成 LinkRowsEditor 放 Dialogs.tsx 或新建 components/LinkRows.tsx 一处实现两处复用。ProjectDialog 的 type select 在编辑态 disabled（第 90 行），所以「type=ops 时显示客户」判断可直接用 f.type。Projects.tsx 的 Lane 是文件内局部组件，「按客户分组」在 ops Lane 内部按 client_id 分小节即可，不必重构页面。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/schema.sql",
+      "/Users/sara/Projects/parallel/src/lib/types.ts",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+      "/Users/sara/Projects/parallel/src/components/Tags.tsx",
+      "/Users/sara/Projects/parallel/src/views/Projects.tsx",
+      "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E2-S3",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/views 目录只有 Board/Inbox/Login/Members/ProjectDetail/Projects/Today/Week 八个视图，无 Clients.tsx；/Users/sara/Projects/parallel/src/components/Dialogs.tsx 只有 TaskDialog/ProjectDialog/StagesDialog/ReminderDialog，无 ClientDialog。/Users/sara/Projects/parallel/src/App.tsx 第 13 行 parse() 只识别 'p/' 前缀（{ v: 'project', id }），第 39 行路由分发无 clients 分支，第 34/41 行 nav 与 tabbar 无「客户」入口。样式侧 /Users/sara/Projects/parallel/src/styles.css 第 134-138 行 .lane、第 89-96 行 .pcard/.pcard.thin、第 211-213 行 .seg 均已存在可复用；但 Lane 组件是 Projects.tsx 内部定义（第 12-26 行）未导出。",
+     "adjustment": "保持故事，做两处减法：(1) 首版 stage 分组可只做「在营 / 其他」两组，线索/暂停/流失合并到「其他」折叠，等 seed 后有真实数据再细分；(2) 「最近日志日期 >3 天灰色未巡检」依赖 E4 日志表，本故事先按「最近任务完成/更新时间」占位或不显示，避免跨史诗阻塞。需要把 Lane 从 Projects.tsx 抽到 components 或在 Clients.tsx 复制 .lane 结构；App.tsx 的 nav 数组要加「客户」项（手机 tabbar 目前 6 个入口，加第 7 个前先看 styles.css 第 255 行附近的 tabbar 宽度）。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Clients.tsx",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/views/Projects.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E2-S4",
+     "status": "未做",
+     "evidence": "无 /Users/sara/Projects/parallel/src/views/ClientDetail.tsx；App.tsx 第 13 行 parse() 不识别 'c/' 前缀。可沿用的写法已确认存在：/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx 第 46 行 rename（onBlur 取 textContent 后 upsertProject）与第 58 行 h1 contentEditable；第 25 行「项目不存在或已删除」兜底页；第 21-22 行 Stepper 与 TaskRow 引入；ProjectDialog 通过「设置」按钮打开（第 55 行）。但仓库没有 MdEditor 组件（grep -rn MdEditor src 无结果），PRD 编辑是 ProjectDetail 内 textarea + marked（第 10-12 行 renderMd、第 30-33 行 onPrd 800ms 自动保存），说明 E3-S1 尚未做。",
+     "adjustment": "保持故事，但把「备注接 MdEditor」改为软依赖：若 E3-S1 未落地，先用 ProjectDetail 的 textarea+renderMd+800ms 防抖写法直接实现备注，后续 E3-S1 抽出 MdEditor 时再替换。「+ 新建 campaign」直接复用 ProjectDialog 并传 { type: 'ops', client_id } 预填，不新写弹窗。四个 seg 占位可先用 styles.css 已有 .seg 样式渲染「即将可用」。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/ClientDetail.tsx",
+      "/Users/sara/Projects/parallel/src/App.tsx",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx",
+      "/Users/sara/Projects/parallel/src/state/store.tsx",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E2-S5",
+     "status": "未做",
+     "evidence": "仓库无 scripts/ 目录（ls scripts 报 No such file），无任何 seed_clients.csv / seed_clients.sql；grep -n 'seed|客户' README.md 无结果。git log 六次提交（acf6519 至 20dd2e8）均无 seed 相关改动。现有四个项目也是手工在界面建的（maps.json 产品说明读者的问题清单第 5 条仍在问要不要做 seed）。",
+     "adjustment": "保持故事但强依赖 E2-S1/E2-S2 的表结构先定稿（channels/links 的 jsonb 形状决定 CSV 列到 SQL 的映射）。建议 CSV→SQL 生成脚本用 Node（仓库已有 node 环境，避免引入 Python），并在 SQL 里用 on conflict (workspace_id, name) do nothing，这要求 003_clients.sql 加该唯一约束。projects.client_id 回填靠项目名匹配客户名，seed 前 Sara 需先确认四个现有项目里哪些是运营线并对应到客户。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/scripts/seed_clients.csv",
+      "/Users/sara/Projects/parallel/scripts/seed_clients.sql",
+      "/Users/sara/Projects/parallel/scripts/gen_seed.mjs",
+      "/Users/sara/Projects/parallel/README.md"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E2-S6",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/views/Inbox.tsx 第 24 行 <div className=\"rmsg\">{r.message}</div> 把消息当纯文本渲染，无任何 #c/ #p/ 等 token 转链接逻辑；第 25 行关联任务只是 <div className=\"muted small\">关联任务：{t.title}</div>，不可点，Inbox.tsx 未引入 TaskDialog（第 4 行只引 ReminderDialog）。/Users/sara/Projects/parallel/src/components/Routines.tsx 表单（第 23-31 行）只有收件人 select、消息 input、time、周几 chips、创建按钮，无「关联客户」下拉，submit（第 12-17 行）也不会在消息末尾附加任何链接。发出的列表（Inbox.tsx 第 32 行）同样纯文本。",
+     "adjustment": "保持故事，范围可再收窄：链接渲染做一个 linkify(message) 小函数放 /Users/sara/Projects/parallel/src/lib/util.ts，只匹配 #c/ #p/（#d/ #f/ 等 E3/E4 上线后再加进正则），Inbox 收到/发出两处都用；任务 chip 可点直接复用 Dialogs.tsx 的 TaskDialog（Inbox 加一个 edit state 即可）。Routines 表单目前是 5 列 grid（styles.css 第 218-219 行 .routine-form），加客户下拉需同步改 grid-template-columns 与 900px 断点。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/views/Inbox.tsx",
+      "/Users/sara/Projects/parallel/src/components/Routines.tsx",
+      "/Users/sara/Projects/parallel/src/lib/util.ts",
+      "/Users/sara/Projects/parallel/src/styles.css"
+     ],
+     "should_drop": false
+    }
+   ]
+  },
+  {
+   "epic_id": "E4",
+   "stories": [
+    {
+     "id": "E4-S1",
+     "status": "未做",
+     "evidence": "仓库没有 migrations 目录（ls migrations 报 No such file），只有 /Users/sara/Projects/parallel/supabase/schema.sql 与 routines.sql。schema.sql 第 7-85 行只建了 profiles/workspaces/workspace_members/invitations/projects/project_members/tasks/reminders 八张表，无 files 表；全文 grep 「storage|files|bucket|replica identity」零命中；第 245-259 行的 publication 段只加了 projects/tasks/reminders/project_members/workspace_members，且任何表都没有 `replica identity full`。README.md 没有任何 Storage/文件相关的部署或验证记录。git status 干净、最新提交 20dd2e8 也不含文件功能。",
+     "adjustment": "保留全部验收项。补充两点：(1) 现有仓库把 SQL 放在 supabase/ 目录而非 migrations/，建议新文件命名为 supabase/006_files.sql（或按现有习惯 supabase/files.sql）并在 README 部署步骤里紧跟 routines.sql 之后列出；(2) 数据层读者已指出 DELETE 事件因缺 replica identity full 不投递，files 表建表时直接加上，避免重蹈 tasks 的问题。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/006_files.sql（新建：files 表、check、RLS、storage.objects 三条策略、publication、replica identity full）",
+      "/Users/sara/Projects/parallel/README.md（部署步骤加建桶与执行 006；三账号验证结果）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S2",
+     "status": "未做",
+     "evidence": "src/lib 只有 supabase.ts、types.ts、util.ts 三个文件，没有 upload.ts；全仓 grep 「supabase.storage|createSignedUrl|webp|canvas|fmtSize|guessCategory」零命中。/Users/sara/Projects/parallel/src/state/store.tsx 的 loadAll（第 73-92 行）只 Promise.all 拉 8 张表，State 类型（第 7-12 行）没有 files 字段，realtime 订阅循环（第 109 行）只列 5 张表，没有 usage 计算。/Users/sara/Projects/parallel/src/lib/types.ts 没有 FileRow 类型；util.ts 只有日期与阶段工具，没有 fmtSize/guessCategory。",
+     "adjustment": "保留全部验收项。实现时沿用 store.tsx 现有模式：loadAll 里增加一条 `supabase.from('files').select('*').eq('workspace_id', ws)`，realtime 订阅数组加 'files' 并在 refetch 里加分支；usage 用 useMemo 对 files 求 sum(size) 即可，不必单独查库。压缩用原生 canvas，不新增 npm 依赖（package.json 当前只有 supabase-js/marked/react）。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/lib/upload.ts（新建：uploadFile/addLink/deleteFile/getUrl + 签名缓存 + canvas 压缩）",
+      "/Users/sara/Projects/parallel/src/lib/types.ts（加 FileRow / FileCategory / FileKind）",
+      "/Users/sara/Projects/parallel/src/lib/util.ts（加 fmtSize、guessCategory）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（State 加 files、loadAll/refetch/realtime 加 files、usage、上传删除动作透出）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S3",
+     "status": "未做",
+     "evidence": "src/components 只有 Dialogs.tsx、Garden.tsx、Modal.tsx、Routines.tsx、Stepper.tsx、Tags.tsx、TaskRow.tsx，没有 FilesPanel/UploadDialog/LinkDialog；grep 「FilesPanel|UploadDialog|附件|文件」在 src 下零命中。/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx 第 62-88 行的 detail 区只有 PRD、任务、阶段计划、协作者四个 panel，没有「文件」panel。依赖的客户页与文档页也不存在：App.tsx 第 14 行 parse() 只识别 `p/` 前缀路由，第 40 行路由表只有 week/board/projects/project/members/inbox/today，无 clients/docs；src/views 下无 Clients.tsx / Docs.tsx。styles.css 已有可复用的 .trow（第 104 行）、.tag（第 71 行）、.panel（第 160 行）、.chip（第 69 行）及 640px 手机断点（第 112 行）。",
+     "adjustment": "保留组件与 UploadDialog/LinkDialog 验收项。「三处嵌入」需要拆分排期：项目页 panel 可以立即做（ProjectDetail.tsx 已存在）；客户页文件 tab 和文档页附件区依赖 E2-S4、E3-S3 尚未存在的页面，建议本故事只交付 FilesPanel 组件 + 项目页嵌入，客户页/文档页嵌入改为在 E2-S4、E3-S3 各自的故事里加一条「嵌入 FilesPanel」验收，避免 E4-S3 被阻塞。Tags.tsx 里新增 CategoryTag 与现有 ProjTag/WhoTag 同风格。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/components/FilesPanel.tsx（新建：列表、行操作、拖拽区、全量/compact 模式）",
+      "/Users/sara/Projects/parallel/src/components/FileDialogs.tsx（新建：UploadDialog、LinkDialog，复用 Modal.tsx）",
+      "/Users/sara/Projects/parallel/src/components/Tags.tsx（加 CategoryTag）",
+      "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx（side 区加「文件」panel）",
+      "/Users/sara/Projects/parallel/src/styles.css（.filerow/.dropzone/.file-card 手机卡片样式，复用 .trow/.tag）",
+      "（依赖 E2-S4）src/views/Clients.tsx 客户页文件 tab",
+      "（依赖 E3-S3）文档页底部附件区"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S4",
+     "status": "未做",
+     "evidence": "App.tsx 第 29 行 nav 数组只有 today/week/board/projects/inbox/members 六项，没有 #clients 路由；第 40 行路由分发无 clients 分支。全仓 grep 「usage|用量|外链|1024」零命中，没有任何用量条或 storage 用量相关代码；README.md 全文无文件规则说明。styles.css 已有 .seg（第 211 行）与 .chips（第 68 行）可复用作 seg 切换和 category chips。",
+     "adjustment": "保留验收项，但入口位置需要随 E2 决定：#clients 页尚不存在。若 E2 未先落地，可临时把全量文件台挂为独立路由 #files（App.tsx nav 加一项）或放进 #projects 的一个 seg，等 #clients 上线再迁。用量条逻辑放 store 的 usage（E4-S2 已算），FilesPanel 全量模式根据 usage/1024MB 切换黄/红并禁用非外链上传。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/App.tsx（路由与导航加 clients 或临时 files 入口）",
+      "/Users/sara/Projects/parallel/src/components/FilesPanel.tsx（全量模式：客户/项目下拉、category chips、只看外链、搜索、空状态、上传规则文案）",
+      "/Users/sara/Projects/parallel/src/components/UsageBar.tsx（新建，或并入 FilesPanel）",
+      "/Users/sara/Projects/parallel/src/styles.css（用量条 80%/95% 色阶）",
+      "/Users/sara/Projects/parallel/README.md（文件规则：视频/PSD/AI/素材包一律外链）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S5",
+     "status": "未做",
+     "evidence": "schema.sql 无 files 表，自然无 period 列；grep 「period|YYYY-MM|时间线|report」在 src 与 supabase 下零命中。没有客户页（src/views 无 Clients.tsx），因此「客户页概览底部报告时间线」无宿主。Routines.tsx 与 routines.sql 已有按周几+时间的定时提醒，但没有「每月 1 号」的按日规则（routines 表只有 hour/minute/weekdays/tz 字段，见 types.ts Routine 类型），README 也无此示例。",
+     "adjustment": "period 字段直接并入 006_files.sql，不单独出迁移。报告时间线组件依赖客户页（E2-S4），在客户页落地前可先在项目页展示（按 project_id 过滤 report 文件），或推迟到 E2-S4 完成后。注意「每月 1 号」提醒当前 routines 只支持周几，README 示例要么改写为「每月第一个周一」用现有 routines 表达，要么在 E2/E5 相关故事里给 routines 加 day_of_month，本故事不要顺手扩 routines。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/006_files.sql（files.period text，格式 check）",
+      "/Users/sara/Projects/parallel/src/components/FileDialogs.tsx（category=report 时显示 period，默认上月）",
+      "/Users/sara/Projects/parallel/src/components/ReportTimeline.tsx（新建，最近 12 个月格子）",
+      "/Users/sara/Projects/parallel/src/lib/util.ts（prevMonthStr / monthRange 工具）",
+      "（依赖 E2-S4）客户页概览嵌入 ReportTimeline",
+      "/Users/sara/Projects/parallel/README.md（月报提醒规则示例）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S6",
+     "status": "未做",
+     "evidence": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx TaskDialog（第 8-65 行）表单只有标题/项目/截止/负责人/状态/优先级/备注，没有附件区，也没有「保存后可加附件」提示；第 21 行完成逻辑只写 done_at，无交付物提示。/Users/sara/Projects/parallel/src/components/TaskRow.tsx 第 20-24 行 .m 区只渲染 ProjTag/WhoTag/DueTag；/Users/sara/Projects/parallel/src/views/Board.tsx 第 37 行卡片 .m 区同样只有这三个 tag，没有回形针或附件计数。types.ts 的 Task 类型无附件相关字段。",
+     "adjustment": "保留验收项。附件计数不需要给 tasks 加列，前端从 store.files 按 task_id 计数即可（两人数据量小，与现有全量内存模式一致）。project/client 自动继承在 UploadDialog 里读 task.project_id 填 projectId，clientId 待 E2 项目挂客户后再补。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog 编辑态加 FilesPanel compact；新建态提示；完成时 deliverable 提示）",
+      "/Users/sara/Projects/parallel/src/components/TaskRow.tsx（.m 区回形针 + 数量）",
+      "/Users/sara/Projects/parallel/src/views/Board.tsx（卡片 .m 区回形针 + 数量）",
+      "/Users/sara/Projects/parallel/src/components/Tags.tsx（AttachTag）",
+      "/Users/sara/Projects/parallel/src/styles.css（.tag.attach）"
+     ],
+     "should_drop": false
+    },
+    {
+     "id": "E4-S7",
+     "status": "未做",
+     "evidence": "App.tsx 第 14 行 parse() 只识别 `p/` 前缀，无 `f/` 路由；src/views 无 FileDetail.tsx。schema.sql 第 75-85 行 reminders 表只有 task_id 关联，无 file_id/doc_id；types.ts Reminder 类型同样只有 task_id。Dialogs.tsx ReminderDialog（第 142-166 行）preset 只接受 {to, message, taskId}，无 fileId。/Users/sara/Projects/parallel/src/views/Inbox.tsx 第 21-27 行收件行只显示「关联任务：{t.title}」，没有文件/文档 chip。grep 「clipboard|#f/|复制引用」零命中。ProjectDetail.tsx 第 10-12 行 renderMd 用 marked 渲染 PRD，`[名称](#f/<id>)` 这种 hash 链接会被原样输出为 <a href=\"#f/...\">，所以路由加上后 Markdown 引用即可点击，无需改渲染。",
+     "adjustment": "保留验收项。file_id/doc_id 迁移建议并入 006_files.sql 的末尾（alter table reminders add column file_id uuid references files(id) on delete set null），不单独出 007；doc_id 依赖 E3 的 docs 表，若 E3 尚未落地则本故事只加 file_id，doc_id 留给 E3。「请求审核」复用现有 sendReminder，只需 store.sendReminder 签名多带 fileId。",
+     "touch_files": [
+      "/Users/sara/Projects/parallel/supabase/006_files.sql（reminders.file_id；doc_id 视 E3 进度）",
+      "/Users/sara/Projects/parallel/src/App.tsx（parse() 识别 f/ 路由，分发 FileDetail）",
+      "/Users/sara/Projects/parallel/src/views/FileDetail.tsx（新建：预览/元数据编辑/下载/外链/请求审核/删除）",
+      "/Users/sara/Projects/parallel/src/components/FilesPanel.tsx（行操作加「复制引用」）",
+      "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（ReminderDialog preset 加 fileId）",
+      "/Users/sara/Projects/parallel/src/state/store.tsx（sendReminder 加 fileId 参数）",
+      "/Users/sara/Projects/parallel/src/lib/types.ts（Reminder 加 file_id/doc_id）",
+      "/Users/sara/Projects/parallel/src/views/Inbox.tsx（收件行文件/文档 chip 可点）"
+     ],
+     "should_drop": false
+    }
+   ]
+  }
+ ],
+ "critic": {
+  "requirement_coverage": [
+   {
+    "requirement": "1. 多租户权限层级：Sara 最高权限，Miranda 由她分配后可修改和执行",
+    "covered": "已覆盖",
+    "where": "现有 schema.sql 的 is_ws_owner / can_edit_project / project_members 已实现两级+按项目分配，蓝图「principles」规定新表 RLS 只复用这三个基元；E1-S2 修工作区归属，E1-S4 修删除按钮与 t_delete 不一致。注意：D1 推荐把 clients / docs（无 project_id）/ files 放宽为成员全可写，这与 Sara「由她分配后可修改」的原口径不同，属于有意放宽，需要 Sara 明确点头并改 README 权限表。"
+   },
+   {
+    "requirement": "2. Miranda 可以在系统上提醒 Sara",
+    "covered": "已覆盖",
+    "where": "现有 r_insert 允许任何工作区成员向任何人发提醒（schema.sql:238），Inbox + ReminderDialog 已可用；蓝图 E5-S4（任务弹窗「提醒负责人」）、E2-S6（消息内站内链接）、E4-S7（就文件请求审核）在此基础上补入口。"
+   },
+   {
+    "requirement": "3. Windows 和 Mac 都可以用",
+    "covered": "已覆盖",
+    "where": "纯浏览器 Web 应用 + GitHub Pages，任何桌面浏览器均可用；PWA 安装按钮（App.tsx beforeinstallprompt）在 Chrome/Edge 上 Windows/Mac 都能装成独立窗口。蓝图没有单独提及，但架构天然满足，无需额外工作。"
+   },
+   {
+    "requirement": "4. 可以插入桌面小组件",
+    "covered": "未覆盖",
+    "where": "蓝图正文、not_doing、open_decisions 均未出现「小组件 / widget」；README「还没做的」第 3 条写「桌面和手机小组件（需要原生壳，第三阶段）」。Web/PWA 技术上做不了系统级小组件，这条应明确写进 not_doing 并给替代方案（见 missing）。"
+   },
+   {
+    "requirement": "5. 手机端可做成 App",
+    "covered": "已覆盖",
+    "where": "现有 vite-plugin-pwa manifest（display: standalone）、apple-touch-icon、底部 tabbar 已上线（20dd2e8）；蓝图 E1-S3 补 iOS「添加到主屏幕」引导、E7-S1 改 5+更多 tabbar、E6-S2 修触屏拖拽失效。"
+   },
+   {
+    "requirement": "6. 视觉参考 Forest / Flora",
+    "covered": "已覆盖",
+    "where": "src/components/Garden.tsx 第一版已落地（每项目一株植物、阶段长叶、逾期枯黄、当天完成开小花）；蓝图 E5-S2 让例行任务勾完也进花园小花，E1-S5 顺手修 README 过时的「花园还没做」。蓝图未规划花园第二版（连续打卡等），符合「不要重」。"
+   },
+   {
+    "requirement": "7. 每天提醒 Miranda 看 SEO 和 SEM",
+    "covered": "已覆盖",
+    "where": "现有 routines.sql + pg_cron 每 10 分钟 run_routines() 已能按周几+时间发收件箱消息；蓝图 E5-S1 升级为 mode='task' 生成可勾选任务，E5-S2 今天页「例行」分组置顶，E2-S4 客户页链接 chips 一排点完巡检，E3-S4「记一笔」落日志，形成闭环。"
+   },
+   {
+    "requirement": "8. 应用关着也能收到提醒",
+    "covered": "未覆盖",
+    "where": "蓝图 not_doing 明确「不做 Web Push / 邮件 / 飞书推送（本轮）」，D6 推荐 A「暂不做，先跑一个月」。但这是 Sara 明确提出的要求，且 maps.json 三位读者都把它列为 high。现有代码通知只在页面存活时弹（store.tsx new Notification），Android 上还会抛错。最轻的补法见 missing 第 1 条（飞书 webhook，一条 pg_net）。"
+   },
+   {
+    "requirement": "9. 像 Notion：文档 / 知识",
+    "covered": "已覆盖",
+    "where": "E3 整个史诗：docs 表（Markdown、kind 枚举、必须挂靠客户/项目）、MdEditor 抽取、#d/:id 文档页、客户页文档/日志 tab、项目页文档面板、SOP 置顶；有意不做块编辑器/页面树/版本历史，与「不要重」一致。"
+   },
+   {
+    "requirement": "10. 像 Jira：执行与状态",
+    "covered": "已覆盖",
+    "where": "现有 tasks（todo/doing/done）+ stages 阶段计划 + 看板/本周/今天已是执行层；蓝图 E5-S1 例行任务、E6-S1 四套 marketing 阶段模板、E6-S2 批量挪逾期、E6-S3 看板筛选与完成列收敛；明确不做 sprint/epic/子任务/依赖/甘特。"
+   },
+   {
+    "requirement": "11. 像 Slack：沟通与更新",
+    "covered": "部分覆盖",
+    "where": "「沟通」由 reminders 承载：E2-S6 消息里 #c/ #p/ #d/ #f/ 可点、E5-S3 收件箱分组与批量清理、E5-S4 就任务催人、E4-S7 就文件请求审核。但「更新」一面（对方改了什么、今天发生了什么）没有任何入口：蓝图明确不做动态流/系统事件帖，日志只记人工「记一笔」。两人公司靠微信/飞书也能补，可接受，但要让 Sara 知道这一块是留白的。"
+   },
+   {
+    "requirement": "12. 不要重",
+    "covered": "部分覆盖",
+    "where": "principles 给了可打勾的「轻的判据」（不加依赖、每期 ≤3 表、只加 1 个顶级导航、固定枚举），not_doing 列了 16 条，这些都对。但整体量级不轻：现有前端+SQL 约 1000 行，蓝图 8 个史诗 32 个故事、估时约 150 小时、3 张新表 + 6 张改表 + 7 个 migration + 10 个待拍板决策，第一阶段就要在 3 周内做 5 个史诗。具体哪些该砍见 too_heavy。"
+   },
+   {
+    "requirement": "13. 符合 marketing 公司的使用习惯",
+    "covered": "已覆盖",
+    "where": "「客户为根」信息架构、channels 枚举（SEO/SEM/XHS/BRAND_AU/LOCAL/WEB）与 Sara 实际业务线一致、clients.links 预设官网/GA/GSC/Semrush/Ads/小红书、ops-seo/ops-xhs/ops-ads/ops-web 阶段模板、报告时间线（月报）、brief/复盘/反馈文档模板、素材外链规则。缺口：月度节奏（retainer 续约、月报截止）没有数据支撑，见 missing。"
+   },
+   {
+    "requirement": "14. 有存储文件的功能台",
+    "covered": "已覆盖",
+    "where": "E4 整个史诗：私有桶 files + public.files 元数据表（上传件与外链同表）、lib/upload.ts 收口所有 storage 调用、FilesPanel 复用四处、category/period 筛选、用量条、20MB 上限与 webp 压缩、7 天签名外链。免费额度算术（1GB ≈ 400 份 PDF + 1000 张图）合理。"
+   }
+  ],
+  "missing": [
+   {
+    "title": "应用关闭时的提醒通道：run_routines 里用 pg_net 调飞书群机器人 webhook",
+    "why": "Sara 明确要求「应用关着也能收到提醒」，蓝图把它整个后置到 D6。两人都在飞书（Sara 日常用 lark-cli），最轻的做法是 routines 加一列 webhook_url（或工作区级一个），run_routines 生成 reminder 后 `perform net.http_post(url, jsonb_build_object('msg_type','text','content',jsonb_build_object('text', message)))`；不动 Service Worker、不做 Edge Function、不需要 iOS 加主屏幕。工程量约 1.5h，比 D6 的任何一项都便宜，且直接堵住「Miranda 早上没开 PWA 就漏看」这个核心场景。",
+    "suggested_epic": "E5",
+    "priority": "P0"
+   },
+   {
+    "title": "数据备份：蓝图说「回滚靠 Supabase 每日备份」，但免费版没有自动备份",
+    "why": "Supabase 自动每日备份是 Pro 计划功能，免费项目没有；蓝图 not_doing 第 1 条和 E3 的「不做版本历史」都建立在这个错误前提上。一旦 docs/files 成为公司文档的唯一落点，误删或表被清空就是全丢。最轻的补法：GitHub Actions 每周用 service_role key（放 Secrets）对 clients/projects/tasks/docs/files/reminders 各 `select *` 导出 JSON 存为 workflow artifact（保留 90 天），与 E1-S5 的 keepalive.yml 合并成一个 workflow；Storage 原件按「文件台是清单不是网盘」的定位，要求合同/报价在 Drive 里保留一份。",
+    "suggested_epic": "E1",
+    "priority": "P0"
+   },
+   {
+    "title": "月度节奏：retainer 续约日、月报截止日、每月固定动作",
+    "why": "marketing 公司的客户几乎都是按月 retainer（memory 里 Bora $2,300/月、Empire SEO $1,800/月×12），每月 1 号出月报、合同到期前一个月要谈续约，这是运营线最硬的节拍。蓝图 clients 表没有任何日期字段，routines 只支持「周几」（E4-S5 自己也承认「每月 1 号」表达不了）。最轻做法：clients 加 `renew_at date null` 和 `fee text null` 两列，客户卡显示「x 天后续约」，30 天内变黄；routines 加 `day_of_month int null`（run_routines 多一个 if），README 示例「每月 1 号上传上月月报 #c/<id>」才能成立。",
+    "suggested_epic": "E2",
+    "priority": "P1"
+   },
+   {
+    "title": "桌面小组件明确写进 not_doing，并给替代方案",
+    "why": "Sara 提过「可以插入桌面小组件」，README 也列在第三阶段，蓝图完全没提，会让 Sara 以为被遗忘或默认会做。Web/PWA 做不了系统级小组件（需要原生壳，明显违背「不要重」）。应在 not_doing 加一条，并给替代：PWA 安装后固定到 Dock/任务栏，「今天」页本身就是小组件式首屏（例行 + 到期 + 花园）；mac 上可用 Safari「添加到程序坞」。",
+    "suggested_epic": "E7",
+    "priority": "P2"
+   },
+   {
+    "title": "客户账号信息（GA/GSC/Ads/小红书登录）的存放规则",
+    "why": "蓝图 clients.note 写「Markdown：联系人、合同要点、账号信息」，等于鼓励把客户平台密码明文写进一个 anon key 公开、注册未关闭的项目里。marketing 公司天天要用客户账号，这个场景一定会碰到。最轻做法：ClientDialog 的 note 占位文案写「不要在这里存密码，只放 1Password/飞书密码箱链接」，README 同句；links 里预设一个「密码箱」label。零代码量，但必须在 seed 前定下来。",
+    "suggested_epic": "E2",
+    "priority": "P1"
+   },
+   {
+    "title": "忘记密码入口",
+    "why": "maps.json 两位读者都指出 Login.tsx 没有 resetPasswordForEmail；蓝图 E1-S2 做了注册加固却漏了这条。Miranda 忘密码只能找 Sara 进 Supabase 后台重置，且 D7-A 关闭注册后更没有自助路径。一个链接 + App 处理 PASSWORD_RECOVERY 事件，约 1h。",
+    "suggested_epic": "E1",
+    "priority": "P2"
+   },
+   {
+    "title": "离线打开显示上次数据而不是死屏",
+    "why": "PWA 读者指出离线打开是「正在准备你的工作区…」死屏；Miranda 在地铁/信号差时打开手机看今天要巡检哪些客户是真实场景。最轻做法：loadAll 成功后把内存快照存 localStorage，启动时先渲染快照并顶部显示「离线，显示上次数据」，online 事件后重拉。不做写队列。约 1.5h，可并入 E1-S1 的 visibility/online 改造。",
+    "suggested_epic": "E1",
+    "priority": "P2"
+   },
+   {
+    "title": "客户交付「待客户确认」状态的最小表达",
+    "why": "小红书笔记、广告文案、设计稿都要先给客户过目再发布，marketing 日常最常卡的就是「等客户确认」。蓝图明确不加 review 列、不做验收流，用「带 file_id 的提醒」替代——这只覆盖了内部两人之间的审核，客户侧等待无处标记。最轻做法：不改枚举，在 tasks 上约定标题前缀「[待确认]」或给 tasks.note 用 DOC_TPL 式约定，看板卡片对含「待确认」的标题显示一个 tag；或 files.category 加 'pending'。零表改动，但要在 README 使用约定里写明。",
+    "suggested_epic": "E6",
+    "priority": "P2"
+   }
+  ],
+  "too_heavy": [
+   "docs.kind 九个枚举（brief/sop/meeting/log/weekly/review/proposal/feedback/note）太多：Sara 的提案实际是 Word/PPTX（memory 里 Made by Cow、Empire 都是 docx/pptx），proposal 会是死枚举；feedback 与 note 无本质区别。收成 5 个：note（默认）/ sop / log / meeting / review，weekly 等 E8 真做时再加，DOC_TPL 从 7 套减到 4 套。",
+   "projects 同时加 channels / links / template 三列，与 clients.channels / clients.links 重复：运营线项目基本一客户一渠道组合，第一版让项目从客户继承，projects 只加 client_id 一列；template 用 stages 第一项名字就能推断，不必存列。E2-S2 的链接行编辑器只做在 ClientDialog 一处。",
+   "E1-S2 的 handle_new_invitation 改查 auth.users + profiles email 禁改触发器：D7 推荐关闭注册后这两个攻击面都不存在了。只保留 revoke execute on run_routines + 关闭 Allow new users to sign up + loadMembership 改造，migration 002 可以砍掉三分之二。",
+   "E2-S5 的 CSV → Node 生成脚本 → SQL：在营客户只有约 11 个（memory：StarX 在营 Marketing 客户清单），Sara 在 ClientDialog 里手填 11 次比写并调试一个 gen_seed.mjs 更快；改为「上线当天 Sara 半小时手动录入」，脚本砍掉。",
+   "E3-S6 纪要待办转任务 + 引入 vitest 写 6 个用例：边界多、要加测试框架、要给 tasks 加 doc_id；两人开会的待办直接在纪要里手动建两三条任务即可。整条故事砍掉，不只是后置。",
+   "E4-S7 独立的 #f/:id 文件详情页 + 元数据编辑 + 请求审核 + 复制引用：FilesPanel 行操作已经有预览/下载/外链/删除，把「改名/改 category」和「复制引用」也做成行操作，文件详情页不做；Markdown 里 [名称](#f/id) 直接指向 signed URL 打开即可。",
+   "E8-S2 全局搜索 ⌘K Modal + docs.body ilike + 孤儿对象清理：两人、十几个客户、几十篇文档，各列表本地筛选已够，蓝图自己也说「留到数据量证明需要」，应从 epics 里整个移到 not_doing，避免占排期。",
+   "E6-S1 StagesDialog「换模板并保留已完成状态」+ 行 ↑↓ 排序：新建时选模板一次就够，改模板等于重开项目；这两项砍掉，只留新建时的模板下拉。",
+   "E5-S3 收件箱按四类分组（例行/指派/关联文档文件/其他）+ 默认折叠规则：两人的收件箱只需要「未读 / 已读」两段 + 「全部标已读」「清 7 天前」两个按钮；分组逻辑砍掉。",
+   "E6-S2 本周计数条按「全部/我的/客户」三维切换、E6-S3 看板「客户下拉 + 渠道 chips + 负责人」三重筛选：筛选维度各留两个（我的/全部；客户/负责人），渠道筛选砍掉——渠道在两人公司里就是「谁负责」的同义词。",
+   "E1-S5 deploy.yml 加 pull_request build-only job：仓库只有 Sara 一个人直推 main，没有 PR 流程，砍掉。routines.tz 校验触发器同理——前端硬编码 Australia/Sydney，砍掉。",
+   "10 个 open_decisions 太多，Sara 拍板成本本身就是「重」：D3/D4/D5/D9/D10 直接采用推荐项写进蓝图即可，真正需要 Sara 表态的只有 D1（新对象权限口径）、D2（Miranda 能否建 campaign）、D6（关闭时通道，建议改为飞书 webhook）、D7（关闭注册）四个。",
+   "第一阶段排了 E1+E7+E2+E5+E3 五个史诗约 90 小时压在 3 周：应切出一个约 35 小时的最小闭环先上线——E1-S1/S4 修同步与覆盖 → E7-S1 导航 → E2-S1/S3/S4 客户表+列表+客户页（链接 chips + 备注）→ E5-S1/S2 例行任务 → E3-S2 只做 log 文档 + append_log + 记一笔。文档页、文档 tab、MdEditor 抽取、docs 其他 kind 全部推到日志习惯跑两周之后。"
+  ],
+  "risks": [
+   {
+    "title": "免费版没有备份，而蓝图把 docs/files 做成公司文档的唯一落点",
+    "detail": "蓝图 not_doing 第 1 条明确写「回滚靠 Supabase 每日备份」，这是事实错误：自动备份是 Pro 功能。同时免费项目 7 天无活动会暂停、暂停超过约 90 天会被删除。上线后 SOP、客户日志、合同 PDF 只存在这一个免费项目里，一次误删（owner 删客户会 cascade 掉该客户全部 docs）或一次账号问题就是全丢，而两人都不会天天检查。",
+    "mitigation": "E1-S5 的 keepalive.yml 扩成「保活 + 每周导出」：service_role key 进 GitHub Secrets，每周 `select *` 六张表导出 JSON 作为 artifact 保留 90 天；clients 删除改为归档（archived=true）不做物理删除，或 docs.client_id 改 on delete set null；README 明确写「合同/报价原件在 Drive 保留一份，文件台是索引不是唯一副本」。"
+   },
+   {
+    "title": "第一阶段范围过大，Miranda 的每日闭环上线太晚，日志习惯建立不起来",
+    "detail": "整套蓝图约 150 小时，第一阶段 90 小时；Sara 是兼职开发（同时管四条业务线），3 周内做不完，而蓝图自己的前提是「日志习惯先跑两周再放周报」。如果客户页要等文档页、MdEditor、docs 九种 kind 全部完成才上线，Miranda 会在这期间继续用微信+Drive，系统上线时已经没有使用惯性，客户页空着就等于没上线。",
+    "mitigation": "按 too_heavy 最后一条切出 35 小时最小闭环：客户表 + 客户页（链接 chips + Markdown 备注）+ 例行任务 + 记一笔日志，一周内让 Miranda 每天早上「打开今天页 → 勾例行 → 点客户链接 → 记一笔」跑起来；两周后看 log 文档条数决定是否继续 E3/E4。数据先于界面：客户由 Sara 手录，不写 seed 脚本。"
+   },
+   {
+    "title": "在没有测试的 1000 行代码上先重构 store 再叠三张新表，回归风险集中在同步层",
+    "detail": "E1-S1/S4 要改 store.tsx 的 realtime 订阅、refetch、loadMembership、所有写函数从 upsert 换 update，涉及 Today/Week/Board/TaskRow/ProjectDetail/Dialogs 七个调用方；仓库没有任何测试，只有 tsc。改坏一处（例如 update 漏传 done_at）两人要到第二天才发现，而 E2/E3/E4 全部建在这层之上。",
+    "mitigation": "E1-S4 拆成两步：先加 updateTask/updateProject 新函数并只迁 Board 拖拽一处，双账号验证后再迁其余；README 固化一份 10 分钟双账号冒烟清单（建/改/删任务、改阶段、发提醒、切后台回来），每次 migration 后跑一遍；新表上线顺序严格 clients → docs → files，每张表单独一个 migration 单独部署，不合并。"
+   },
+   {
+    "title": "Storage RLS 与桶策略配错的两个方向：客户文件泄露，或 Miranda 传不了文件",
+    "detail": "storage.objects 策略用 (storage.foldername(name))[1]::uuid 判工作区，路径拼错、桶误设 public、或 owner_id 列名用错（Supabase 已弃用 owner 改 owner_id）都会让策略静默失效；anon key 公开在仓库里，桶一旦 public 等于合同/报价对全网可下载。反方向：delete 策略叠了 can_edit_project 就会让 Miranda 传不了自己负责客户的文件，功能直接废。",
+    "mitigation": "蓝图 E4-S1 的三账号实测必须做且结果写进 README；桶创建时截图确认 public 未勾；上传路径由 upload.ts 单点生成不允许调用方传 path；上线前用 curl 带 anon key 直接请求一个对象 URL 验证 401；files 表与 storage.objects 的 delete 策略都只用「上传者或 owner」，绝不叠 can_edit_project。"
+   },
+   {
+    "title": "D1/D2 把新对象放宽为成员全可写，与 README「按项目分权」承诺和 Sara 要求 1 的口径冲突",
+    "detail": "蓝图推荐 clients / 客户级 docs / files 成员全可读写、Miranda 可建 ops campaign，理由充分（否则功能对 Miranda 是废的），但 Sara 提的第一条要求是「由她分配后可修改」。如果没拍板就实施，Sara 事后发现 Miranda 能改任何客户档案、删自己传的文件、建项目，会觉得权限失控；如果按严格口径做，Miranda 的日常闭环全部卡在 Sara 手里。",
+    "mitigation": "把 D1/D2 作为第一阶段开工前必须回答的两个问题单独发给 Sara，附一句话后果对比；实施时 RLS 与 README 权限表同一个 commit 改，权限表里加「客户 / 文档 / 文件」三行。删除动作统一「创建者或 owner」，写动作统一「工作区成员」，不要出现第三种口径。"
+   },
+   {
+    "title": "Service Worker autoUpdate + 每小时 update() 会在 Sara 写 PRD/文档时强制刷新丢内容",
+    "detail": "vite.config.ts 是 registerType: 'autoUpdate'，新 SW 激活即 reload；E1-S3 加了每小时 r.update() 和 visibilitychange 检查后，触发频率从「只在打开时」变成「随时」，MdEditor 800ms 防抖窗口内的输入和 contentEditable 标题会丢。",
+    "mitigation": "改 registerType: 'prompt'，onNeedRefresh 用现有 toast 显示「有新版本，点击刷新」，只在用户点击或 visibilityState 变 hidden 时执行 updateSW；或 update() 只在 document.hidden 时调用。"
+   },
+   {
+    "title": "Miranda 账号现状未核实，E1-S2 与 D7 的顺序错了会把她锁在空工作区或锁在门外",
+    "detail": "maps.json 三位读者都问「Miranda 是否已经注册」。若她已用其他邮箱或先于邀请注册，loadMembership 改造前她永远看到空工作区；若 D7 先关闭注册再邀请，她根本注册不了。",
+    "mitigation": "开工第一步在 Supabase 后台查 auth.users 与 workspace_members 确认 Miranda 状态；顺序固定为：loadMembership 改造上线 → 确认 Miranda 在 Sara 工作区 → 关闭注册；README「第一次使用」按此顺序改写。"
+   }
+  ],
+  "overall": "蓝图对 Sara 14 条要求的覆盖是 11 条已覆盖、2 条部分覆盖（像 Slack 的「更新」一面、不要重）、2 条未覆盖（桌面小组件、应用关闭时的提醒），其中「应用关闭时收到提醒」是 Sara 明确提过、maps.json 三位读者都标 high、而蓝图主动放弃的一条，建议用 run_routines 里一条 pg_net 调飞书 webhook（约 1.5h）补上而不是等一个月。信息架构本身是对的：客户为根、文档必须挂靠、上传件与外链同表、执行层不动只加回链，「轻的判据」也写得可执行。问题在量级：现有代码约 1000 行，蓝图要加约 150 小时、7 个 migration、10 个拍板项，第一阶段 90 小时压 3 周对兼职开发的 Sara 不现实，Miranda 的每日闭环会因此推迟到日志习惯已无法建立。建议按 too_heavy 砍掉纪要转任务、全局搜索、文件详情页、seed 脚本、docs 九种 kind、projects 重复列、StagesDialog 换模板、收件箱四分组、PR build job，把第一阶段压成约 35 小时的「客户表 + 客户页链接 chips + 例行任务 + 记一笔」最小闭环，一周内上线，两周后看日志条数再决定 E3/E4。两个事实性修正必须改进蓝图：免费版没有每日备份（不能作为不做版本历史的理由，需加每周导出）；routines 不支持每月节奏（月报/续约是 marketing 公司最硬的节拍，需要 day_of_month 或 clients.renew_at）。真正需要 Sara 拍板的只有四件：新对象权限是否放宽（D1）、Miranda 能否建 campaign（D2）、关闭时通道走飞书 webhook（D6 改选项）、注册何时关闭（D7 与 Miranda 账号现状核实后再定）。"
+ }
+}

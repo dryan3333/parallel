@@ -1,0 +1,584 @@
+[
+ {
+  "area": "产品说明与角色（README / index.html / public / package.json / 权限模型）",
+  "summary": "「平行线」定位为两人用的产品线+运营线并行项目管理台：项目分 product/ops 两条 lane，每个项目有 Markdown PRD、阶段计划（stages jsonb）、任务；全局有今天/本周/看板/提醒/成员六个视图，做成 PWA 部署在 GitHub Pages（dryan3333/parallel），后端 Supabase。角色模型只有两级：workspace owner（Sara）和 member（Miranda），member 的编辑范围靠 project_members 逐项目勾选，权限主要在 supabase/schema.sql 的 RLS 里强制。代码实现整体与 README 的权限表一致，且已超出 README 描述（本周视图、花园、定时提醒、指派通知、手机底部导航都已做但 README 未提）。最需要注意的是两个「上手即踩」的坑：Miranda 若在被邀请前注册会永久落在自己的空工作区（store 取最早的 membership），以及「今天」页快速添加可选到无权限项目导致 RLS 报错。README 的「还没做」清单已过时：花园第一版已在 20dd2e8 落地。",
+  "capabilities": [
+   "产品定位与品牌落地：index.html 标题「平行线」、PWA manifest（name/short_name/图标/standalone）在 /Users/sara/Projects/parallel/vite.config.ts，图标 /Users/sara/Projects/parallel/public/icon.svg 与 icon-192/512.png，index.html 里配好 apple-touch-icon 与 iOS 全屏 meta",
+   "登录/注册（邮箱+密码，注册带显示名）：/Users/sara/Projects/parallel/src/views/Login.tsx；未配置 Supabase 时禁用按钮并提示",
+   "注册自动建档与工作区归属：无邀请者自建工作区成 owner，有邀请者加入邀请方工作区成 member（触发器 handle_new_user）；已注册用户后补邀请立即加入（handle_new_invitation）：/Users/sara/Projects/parallel/supabase/schema.sql",
+   "两级角色 owner/member + 按项目 can_edit 分配：workspace_members / project_members 表与 is_ws_owner / can_edit_project 函数，RLS 覆盖 profiles/workspaces/members/invitations/projects/project_members/tasks/reminders：/Users/sara/Projects/parallel/supabase/schema.sql",
+   "owner 专属：新建/删除项目、归档/恢复（UI 层）、邀请与撤销邀请、移除成员、项目权限矩阵与项目页协作者勾选：/Users/sara/Projects/parallel/src/views/Members.tsx、src/views/ProjectDetail.tsx、src/components/Dialogs.tsx（ProjectDialog）",
+   "被分配 member 可改 PRD/阶段/任务；未分配 member 只读并在 UI 标「只读」，可建个人任务、可发提醒：客户端判断 canEdit / canEditTask 在 /Users/sara/Projects/parallel/src/state/store.tsx，与 RLS 的 t_insert/t_update/t_delete 对应",
+   "任务负责人无论项目权限都能改自己被指派的任务（RLS t_update assignee_id = auth.uid()，客户端 canEditTask 同样放行）：schema.sql + store.tsx",
+   "两条 lane 的项目列表、按类型自动生成阶段模板与 PRD 模板（产品：需求收集→上线 6 步；运营：策划→复盘 4 步）：/Users/sara/Projects/parallel/src/views/Projects.tsx、src/lib/util.ts",
+   "项目详情：Markdown PRD 编辑/预览自动保存、阶段勾选与截止日、项目内任务列表、行内重命名：/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx",
+   "今天视图（逾期/今天/进行中/未来 7 天/今天完成、只看我的、快速添加）与花园视觉（每项目一株植物，阶段进度长叶，逾期变黄，当天完成开小花）：/Users/sara/Projects/parallel/src/views/Today.tsx、src/components/Garden.tsx",
+   "本周视图拖拽改截止日、看板拖拽改状态（含产品/运营筛选）：/Users/sara/Projects/parallel/src/views/Week.tsx、src/views/Board.tsx",
+   "提醒：互发提醒（可关联任务、可填希望处理时间）、已读/删除、实时同步、应用开着时系统通知弹窗、指派任务自动给负责人发提醒：/Users/sara/Projects/parallel/src/views/Inbox.tsx、src/components/Dialogs.tsx（ReminderDialog）、src/state/store.tsx（realtime + Notification）",
+   "定时提醒（按周几+时间，悉尼时区，pg_cron 每 10 分钟生成一条提醒；创建者或 owner 可暂停/删除）——正是 Miranda「每天看 SEO/SEM」的承载：/Users/sara/Projects/parallel/supabase/routines.sql、src/components/Routines.tsx",
+   "Supabase Realtime 订阅 projects/tasks/reminders/project_members/workspace_members 变更后重拉数据：/Users/sara/Projects/parallel/src/state/store.tsx",
+   "PWA：vite-plugin-pwa autoUpdate、安装按钮（beforeinstallprompt）、手机宽度底部 tabbar：/Users/sara/Projects/parallel/src/App.tsx、src/main.tsx、src/styles.css",
+   "GitHub Actions 自动构建部署到 Pages，base 路径取仓库名；publishable key 随仓库提交在 .env.production：/Users/sara/Projects/parallel/.github/workflows/deploy.yml、.env.production"
+  ],
+  "gaps": [
+   {
+    "title": "Miranda 若先注册后被邀请，会被永久锁在自己的空工作区",
+    "detail": "handle_new_user 对无邀请的注册者自建工作区并设为 owner；之后 Sara 再邀请，handle_new_invitation 会把她加进 Sara 的工作区，但 store.loadMembership 用 `.order('created_at').limit(1)` 取最早的 membership，永远命中她自己的那个空工作区，且没有工作区切换入口。邮箱大小写/换邮箱注册也会触发同样情况。可执行修法：(1) loadMembership 拉全部 membership，优先选 role='member' 的，或优先选成员数 >1 的工作区；(2) handle_new_invitation 里若被邀请者只拥有一个空的自建工作区就顺手删掉；(3) README「第一次使用」加一句「务必先邀请再让她注册，且用同一邮箱」。",
+    "severity": "high",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx（loadMembership）; /Users/sara/Projects/parallel/supabase/schema.sql（handle_new_user / handle_new_invitation）; /Users/sara/Projects/parallel/README.md（第一次使用）"
+   },
+   {
+    "title": "「今天」页快速添加的项目下拉没按权限过滤，member 选到无权项目会被 RLS 拒绝",
+    "detail": "Today.tsx 的 quick 表单 `<select>` 用的是全部未归档项目 `ps`，而 TaskDialog 已经用 `projects.filter(p => canEdit(p.id))`。Miranda 只被分配运营线时，在今天页选 Jarvis Solar CRM 添加任务会 toast「保存失败：new row violates row-level security policy」。修法：Today.tsx 第 268 行改为 `ps.filter(p => canEdit(p.id))`。",
+    "severity": "medium",
+    "file": "/Users/sara/Projects/parallel/src/views/Today.tsx:268"
+   },
+   {
+    "title": "README 部署步骤漏掉 routines.sql，重建 Supabase 会丢失定时提醒",
+    "detail": "README 步骤 1.2 只让执行 schema.sql，但 routines.sql 末尾注释写明「需在本文件之后执行」，且 pg_cron 扩展也在 routines.sql 里启用。若缺表，store.loadAll 对 routines 的查询静默失败，Inbox 的定时提醒面板永远为空、创建时报错。修法：README 步骤 1.2 加一行「再把 supabase/routines.sql 整个贴进去 Run」。",
+    "severity": "medium",
+    "file": "/Users/sara/Projects/parallel/README.md（第一次部署 → 1. Supabase）; /Users/sara/Projects/parallel/supabase/routines.sql"
+   },
+   {
+    "title": "README「还没做」清单已过时，功能描述也落后于代码",
+    "detail": "花园视觉已在 20dd2e8（9/14 18:04）落地，README 最后改于 9/14 12:28 仍列为第二阶段；本周视图、定时提醒、指派自动提醒、安装按钮、手机底部导航都已做但 README 正文完全没提。修法：把「Forest / Flora 式的花园视觉」从清单移除或改写为「花园第二版（连续打卡/更多植物形态）」，并在首段功能列表加上 本周 / 花园 / 定时提醒。",
+    "severity": "medium",
+    "file": "/Users/sara/Projects/parallel/README.md（首段 + 还没做的）"
+   },
+   {
+    "title": "任务负责人的实际权限比 README 写的「改状态」宽得多",
+    "detail": "README 权限表说负责人「能改自己被指派的任务状态」，但 RLS t_update 只要 assignee_id = auth.uid() 就放行整行更新（标题、截止、备注、优先级、甚至把任务挪到自己无权编辑的项目），客户端 canEditTask 也同样全放行。要么把 README 改成「能修改被指派的任务」，要么在 t_update 加 with check 限制负责人只能改 status/done_at（需用触发器比对 old/new 或拆列权限）。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql（t_update）; /Users/sara/Projects/parallel/src/state/store.tsx（canEditTask）; /Users/sara/Projects/parallel/README.md（权限模型表）"
+   },
+   {
+    "title": "任务编辑弹窗对负责人显示「删除」按钮，但 RLS 不允许负责人删除",
+    "detail": "TaskDialog 用 canEditTask 决定是否显示删除按钮（负责人为 true），而 t_delete 策略只允许 owner / 项目可编辑者 / 个人任务创建者。Miranda 作为被指派到产品线任务的负责人点删除会 toast「删除失败」。修法：Dialogs.tsx 删除按钮条件改为 `isOwner || canEdit(task.project_id) || (!task.project_id && task.created_by === user.id)`，或在 store 增加 canDeleteTask。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog 删除按钮）; /Users/sara/Projects/parallel/supabase/schema.sql（t_delete）"
+   },
+   {
+    "title": "「归档」只在界面上限制 owner，RLS 允许被分配 member 归档/改类型",
+    "detail": "README 强调「权限在行级安全里强制执行，不是只在界面上隐藏按钮」，但 pr_update 只检查 can_edit_project，archived / type / created_by 字段没有额外约束，被分配的 member 通过 API 可以归档项目或改类型。两人协作风险不大，但与 README 承诺不符。修法：pr_update 加 with check `(archived = (select archived from projects where id = projects.id) or is_ws_owner(workspace_id))`，或用 before update 触发器拦截非 owner 改 archived/type/created_by。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql（pr_update）; /Users/sara/Projects/parallel/src/components/Dialogs.tsx（ProjectDialog）"
+   },
+   {
+    "title": "没有找回密码入口",
+    "detail": "Login.tsx 只有登录/注册，没有「忘记密码」。Miranda 忘记密码只能靠 Sara 去 Supabase 后台重置。修法：加一个链接调用 supabase.auth.resetPasswordForEmail(email, { redirectTo: 站点地址 })，并在 App 里处理 PASSWORD_RECOVERY 事件弹出设新密码表单。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/src/views/Login.tsx"
+   },
+   {
+    "title": "邀请不会发邮件，README 未明说",
+    "detail": "invite 只是往 invitations 表插一行，没有任何邮件通知；README 写「输入她的邮箱点邀请，然后她用这个邮箱注册」容易让人以为对方会收到邮件。修法：README 加一句「系统不发邮件，需要自己把地址告诉她」；或在成员页邀请成功的 toast 里提示。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/README.md（第一次使用 步骤 2）; /Users/sara/Projects/parallel/src/views/Members.tsx"
+   },
+   {
+    "title": "README 用词前后不一致：anon public key vs publishable key",
+    "detail": "步骤 1.4 让记下「anon public key」，步骤 2.3 又说「publishable key」；.env.example 变量名是 VITE_SUPABASE_ANON_KEY 但 .env.production 里放的是 sb_publishable_ 前缀的新式 key。Supabase 两种 key 都能用，但新手会困惑。修法：README 统一写「publishable key（旧版叫 anon key）」。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/README.md; /Users/sara/Projects/parallel/.env.example"
+   },
+   {
+    "title": "routines 表加入了 realtime publication 但客户端未订阅，对方创建的定时提醒和 last_fired 不实时更新",
+    "detail": "store 的 realtime 循环只订阅 projects/tasks/reminders/project_members/workspace_members；routines 需刷新页面才能看到对方新建的定时提醒或「上次触发」时间。修法：把 'routines' 加进订阅列表并在 refetch 里增加对应分支。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx（realtime useEffect）"
+   },
+   {
+    "title": "README 称「免费版够两人用」但未提 Supabase 免费项目 7 天无活动会暂停",
+    "detail": "两人若一周都没打开应用，Supabase 免费项目会被暂停，打开后卡在「正在准备你的工作区…」，pg_cron 定时提醒也停。修法：README 加一句说明与恢复方法（到 Supabase 控制台 Restore），或考虑 Pro 计划。",
+    "severity": "low",
+    "file": "/Users/sara/Projects/parallel/README.md（技术栈）"
+   }
+  ],
+  "questions": [
+   "任务负责人权限：按 README 收紧为「只能改状态」，还是承认现状「被指派就能改整条任务（含截止、挪项目）」并改 README？",
+   "不关联项目的「个人任务」现在全工作区可见（Miranda 能看到 Sara 的个人任务，反之亦然）。要不要做成仅本人可见？",
+   "Miranda「每天看 SEO 和 SEM」：用现在的定时提醒消息（只能标已读）够不够，还是需要「每日重复任务」（每天自动生成一条可勾选完成的任务，能回看哪天没做）？这决定要不要给 routines 加「生成任务」模式。",
+   "花园第一版已上线，README「还没做」里的花园条目是删掉，还是改成第二版目标（比如连续打卡种树、更多植物形态）？",
+   "四个项目（Jarvis Solar CRM、SE Lab、品牌出海澳洲落地、Local Service）要不要做一次性 seed 脚本，还是 Sara 手动建？",
+   "被分配的 member 是否允许归档项目？当前 API 允许、界面不允许，二选一对齐。",
+   "Miranda 是否已经注册？若已注册且没有先被邀请，需要先处理高严重度那条工作区归属问题（改 loadMembership 或在 Supabase 后台删掉她的空工作区）。",
+   "定时提醒时区固定为 Australia/Sydney，两人都在悉尼可以接受吗？还是需要按人设置？",
+   "要不要做「忘记密码」？两人用的话 Sara 在 Supabase 后台重置也行，但要确认接受这种方式。"
+  ]
+ },
+ {
+  "area": "数据模型与权限（supabase/schema.sql、supabase/routines.sql 及前端对应调用）",
+  "summary": "这一块用 9 张表承载「一个工作区 + 两个人」的协作模型：profiles（用户档案）、workspaces / workspace_members（工作区与角色 owner/member）、invitations（按邮箱邀请）、projects / project_members（项目与按项目分配的编辑权）、tasks（任务，可不挂项目）、reminders（收件箱提醒）、routines（定时提醒规则）。权限全部落在 Postgres RLS 上：三个 security definer 函数 is_ws_member / is_ws_owner / can_edit_project 作为判断基元，策略按「工作区成员可读全部、owner 可建删项目和管成员、被分配 can_edit 的成员可改该项目及其任务、任务被指派人可改该任务、未分配成员只能建无项目的个人任务和发提醒」执行，前端 store.tsx 的 canEdit/canEditTask 只是同一规则的镜像。注册走 auth.users 触发器：有邀请就作为 member 进入对应工作区，否则自建工作区当 owner；owner 邀请已注册用户时由 invitations 触发器直接补进成员。定时提醒由 pg_cron 每 10 分钟调 run_routines()，按 routines 里的时区/周几/时间判断当天未发过就往 reminders 插一条（from_user=创建者），前端 realtime 收到 INSERT 后弹系统通知。整体骨架清晰、两人场景下够用；主要风险集中在「邀请匹配靠邮箱且可被抢注/篡改」「成员移除后残留权限」「没有 owner 转让」「UPDATE 策略缺 with check 导致被指派人/编辑者权限比 README 宣称的宽」这几处。",
+  "capabilities": [
+   "9 张表及外键级联：workspace 删除级联所有业务数据，用户删除级联 profiles/成员/邀请/提醒/routines，任务 assignee 置空——/Users/sara/Projects/parallel/supabase/schema.sql:7-85, /Users/sara/Projects/parallel/supabase/routines.sql:4-17",
+   "角色约束 role in ('owner','member')、项目类型 product/ops、任务状态 todo/doing/done、优先级 normal/high 都由 check 约束保证——/Users/sara/Projects/parallel/supabase/schema.sql:24,42,65-66",
+   "三个 security definer 权限基元 is_ws_member / is_ws_owner / can_edit_project（owner 恒可编辑，成员需 project_members.can_edit=true），避免 RLS 自递归——/Users/sara/Projects/parallel/supabase/schema.sql:92-111",
+   "注册触发器 handle_new_user：建 profiles；按邮箱（不区分大小写）命中邀请则以 member 加入并清掉该邮箱全部邀请，否则自建工作区『平行线』并写入 owner 成员行——/Users/sara/Projects/parallel/supabase/schema.sql:114-135",
+   "邀请触发器 handle_new_invitation：被邀请邮箱已注册时直接插 workspace_members 并丢弃邀请行（before insert 返回 null）——/Users/sara/Projects/parallel/supabase/schema.sql:138-152",
+   "projects/tasks 的 updated_at 自动刷新触发器——/Users/sara/Projects/parallel/supabase/schema.sql:154-159",
+   "RLS profiles：同工作区互相可见、只能改自己——/Users/sara/Projects/parallel/supabase/schema.sql:172-179",
+   "RLS workspaces：成员可读、owner 可改名；无用户侧 insert/delete（仅触发器建）——/Users/sara/Projects/parallel/supabase/schema.sql:182-186",
+   "RLS workspace_members：成员可读；owner 可删除他人（不能删自己）；无 insert/update 策略，角色不可改——/Users/sara/Projects/parallel/supabase/schema.sql:189-192",
+   "RLS invitations：仅 owner 可读/发/撤，且 invited_by 必须是自己——/Users/sara/Projects/parallel/supabase/schema.sql:195-196",
+   "RLS projects：成员可读全部；仅 owner 可建（created_by=自己）和删；can_edit_project 者可改——/Users/sara/Projects/parallel/supabase/schema.sql:199-206",
+   "RLS project_members：成员可读；仅 owner 增删（权限矩阵）——/Users/sara/Projects/parallel/supabase/schema.sql:209-215",
+   "RLS tasks：成员可读；建任务需 created_by=自己且（无项目 或 有该项目编辑权）；改：owner / 被指派人 / 无项目任务的创建者 / 项目编辑者；删：owner / 无项目任务创建者 / 项目编辑者——/Users/sara/Projects/parallel/supabase/schema.sql:218-232",
+   "RLS reminders：只有收发双方可见；成员可向任何 user 发（from_user=自己）；收件人可标已读；收发双方可删——/Users/sara/Projects/parallel/supabase/schema.sql:235-242",
+   "RLS routines：成员可读、可建（created_by=自己）；创建者或 owner 可改/删——/Users/sara/Projects/parallel/supabase/routines.sql:20-28",
+   "run_routines()（security definer，绕过 RLS）：按 routine 时区算本地时间，周几命中、已过设定时刻、last_fired 早于今天则插一条 reminder（from_user=创建者，remind_at=now）并回写 last_fired——/Users/sara/Projects/parallel/supabase/routines.sql:31-48",
+   "pg_cron 任务 parallel-routines 每 10 分钟执行 run_routines()，重复执行 SQL 会先 unschedule 再 schedule——/Users/sara/Projects/parallel/supabase/routines.sql:51-55",
+   "Realtime publication 覆盖 projects/tasks/reminders/project_members/workspace_members/routines；前端订阅前 5 张（按 workspace_id 过滤），收到变化整表重拉，reminders INSERT 且 to_user 是自己时弹 Notification——/Users/sara/Projects/parallel/supabase/schema.sql:245-259, /Users/sara/Projects/parallel/src/state/store.tsx:99-123",
+   "前端权限镜像 canEdit/canEditTask 与 RLS 一致；成员页移除成员、邀请/撤销、权限矩阵勾选均由 owner 操作并直接走表写入（RLS 兜底）——/Users/sara/Projects/parallel/src/state/store.tsx:125-134,173-189, /Users/sara/Projects/parallel/src/views/Members.tsx",
+   "任务指派给他人时自动向被指派人插一条 reminder——/Users/sara/Projects/parallel/src/state/store.tsx:161-165"
+  ],
+  "gaps": [
+   {
+    "title": "邀请可被抢注：开放注册 + README 建议关闭邮箱验证",
+    "detail": "handle_new_user 只按 new.email 与 invitations.email 匹配（schema.sql:120-123）。站点在公开的 GitHub Pages 上、Supabase 默认允许任何人注册，README 又建议关掉 Confirm email；任何知道站点地址和 Miranda 邮箱的人先用她的邮箱注册，就会自动成为工作区 member，看到全部项目/PRD/任务。可执行修法（三选一或组合）：1) 保持 Supabase Auth 的 Confirm email 开启；2) 两人都注册完后在 Supabase Auth 设置里关闭 Enable Sign Ups；3) 把加入工作区的逻辑从 after insert on auth.users 改为 after update（当 email_confirmed_at 从 null 变非空时再匹配邀请）。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:114-135；README.md『第一次部署』第 3 步",
+    "severity": "high"
+   },
+   {
+    "title": "profiles.email 可被本人改写，邀请匹配被劫持",
+    "detail": "profiles_update 只要求 id=auth.uid()，没有 with check，用户可以把自己的 profiles.email 改成任意值（schema.sql:178-179）；而 handle_new_invitation 是拿 profiles.email 去匹配（schema.sql:141）。任何已注册账号把 email 改成 Miranda 的邮箱，等 Sara 一发邀请就被直接拉进工作区，邀请行还被删掉，Sara 看不到异常。修法：1) handle_new_invitation 改查 auth.users（security definer 可读）：select id into uid from auth.users where lower(email)=lower(new.email)；2) 给 profiles 加 before update 触发器：if new.email is distinct from old.email then raise exception；或前端只允许改 display_name 且 RLS 用 with check 限制。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:138-152,178-179",
+    "severity": "high"
+   },
+   {
+    "title": "被邀请者若已有自己的工作区，永远进不了 Sara 的工作区",
+    "detail": "store.tsx:67 取 workspace_members 里 created_at 最早的一条作为当前工作区。如果 Miranda 先注册（handle_new_user 会给她自建一个工作区并当 owner），Sara 再邀请她（handle_new_invitation 把她补进 Sara 的工作区），她登录后看到的仍是自己那个空工作区，且界面显示她是『最高权限』。README 写的『已注册的会立即加入』实际不成立。修法：1) loadMembership 改为优先取 role='member' 的行（或成员数 >1 的工作区），并在成员页提供工作区切换；或 2) 改 handle_new_user：没有邀请时不再自建工作区（只有系统首个用户自建），这样只会有一个工作区；同时给出『没有邀请，请联系管理员』的登录提示。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx:65-71；/Users/sara/Projects/parallel/supabase/schema.sql:124-127",
+    "severity": "high"
+   },
+   {
+    "title": "移除成员后权限与数据残留（project_members、routines、reminders、assignee）",
+    "detail": "removeMember 只删 workspace_members（store.tsx:180-183）。残留：a) project_members 行不会随之删除（它只级联 projects/auth.users），重新邀请回来会立刻恢复全部项目编辑权；b) routines.to_user 指向她的规则仍 active，run_routines 是 security definer 会继续给非成员生成 reminders；c) r_select/r_update/r_delete 不检查工作区成员身份（schema.sql:236-242），被移除者仍可读、改、删自己名下的历史提醒并持续收到新提醒；d) tasks.assignee_id 仍指向她，界面显示为『成员』。修法：在 workspace_members 上加 after delete 触发器（security definer）：delete project_members where user_id=old.user_id and project_id in (select id from projects where workspace_id=old.workspace_id)；update routines set active=false（或 delete）where workspace_id=old.workspace_id and (to_user=old.user_id or created_by=old.user_id)；update tasks set assignee_id=null where workspace_id=old.workspace_id and assignee_id=old.user_id；r_select 加 and is_ws_member(workspace_id)。Members.tsx:21 的确认文案『她的任务会保留』按拍板结果调整。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:189-192,235-242；/Users/sara/Projects/parallel/src/state/store.tsx:180-183；/Users/sara/Projects/parallel/src/views/Members.tsx:21",
+    "severity": "medium"
+   },
+   {
+    "title": "没有 owner 转让/退出机制，owner_id 与 role='owner' 双份真相",
+    "detail": "workspace_members 没有任何 insert/update 策略，wm_delete 排除自己（schema.sql:192），所以 owner 不能改角色、不能退出、不能把最高权限交给 Miranda；workspaces.owner_id（schema.sql:17）与 workspace_members.role 并存，但所有 RLS 只看 role，owner_id 没被使用，将来若手改一处会不一致。修法：加 security definer 函数 transfer_ownership(ws uuid, new_owner uuid)：校验调用者 is_ws_owner，事务内 update workspace_members 两行角色互换、update workspaces set owner_id=new_owner；或明确不需要并在 README 写明。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:14-27,189-192",
+    "severity": "medium"
+   },
+   {
+    "title": "UPDATE 策略无 with check：被指派人/编辑者实际权限比 README 宣称的宽",
+    "detail": "t_update（schema.sql:225-228）没有 with check，Postgres 会用 using 表达式校验新行，因此被指派人只要不把 assignee_id 改掉，就能改任务任何字段：标题、note、due、project_id（可移到自己没有编辑权的项目）、created_by、甚至 workspace_id。README 说『任务负责人只能改状态』。同理 pr_update（schema.sql:204）无 with check，有编辑权的成员可通过 API 改 archived/type/name，README 说『归档只有 owner』，UI 只是藏了按钮（Dialogs.tsx:95-99）。修法：tasks 加 before update 触发器：若 not is_ws_owner(old.workspace_id) and not can_edit_project(old.project_id) and old.created_by<>auth.uid()，则只允许 status/done_at/note 变化，其余字段 is distinct from 就 raise；projects 加触发器：new.archived is distinct from old.archived 或 workspace_id 变化时要求 is_ws_owner。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:204,225-228；README.md『权限模型』表",
+    "severity": "medium"
+   },
+   {
+    "title": "projects.created_by / tasks.created_by 外键无 on delete 动作，删账号会失败",
+    "detail": "schema.sql:47 与 :69 的 references auth.users(id) 没有 on delete 子句（默认 no action）。Sara 若在 Supabase 后台删除 Miranda 的账号，只要她建过任务或项目就会 FK 报错，删不掉；反过来 workspaces.owner_id 是 cascade，删 Sara 的账号会连整个工作区数据一起删。修法：拍板后二选一：created_by 改为 nullable 并 on delete set null（保留数据、显示为『已离开的成员』），或 on delete cascade（跟人走）。用 alter table ... drop constraint / add constraint 做 migration。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:17,47,69",
+    "severity": "medium"
+   },
+   {
+    "title": "run_routines 单条脏数据会让所有定时提醒停摆；免费版项目暂停也会停摆",
+    "detail": "routines.tz 是自由文本没有校验（routines.sql:13），run_routines 里 now() at time zone r.tz 遇到非法时区名会抛错，整个函数回滚，所有人的定时提醒一起停，且 pg_cron 只在 cron.job_run_details 里记错误，前端无感知。UI 目前硬编码 Australia/Sydney 所以暂时不会触发，但 RLS 允许任意值。修法：加 check (tz in (select name from pg_timezone_names)) 不行（子查询不能用于 check），改为 before insert/update 触发器 perform now() at time zone new.tz 校验；并把 loop 体用 begin ... exception when others then raise warning 包裹，逐条隔离。另需知悉：Supabase 免费版 7 天无活动会暂停项目，pg_cron 也随之停止。",
+    "file": "/Users/sara/Projects/parallel/supabase/routines.sql:13,31-48",
+    "severity": "medium"
+   },
+   {
+    "title": "security definer 函数默认对 anon/authenticated 开放 RPC",
+    "detail": "Supabase 里 public schema 的函数默认 grant execute 给 anon 和 authenticated，run_routines() 可以被任何持 anon key 的人通过 /rest/v1/rpc/run_routines 调用。副作用有限（只会让到点的提醒提前最多 10 分钟触发），但没必要暴露。is_ws_member 等只返回关于自己的布尔值，无害。修法：revoke execute on function public.run_routines() from public, anon, authenticated;",
+    "file": "/Users/sara/Projects/parallel/supabase/routines.sql:31-48",
+    "severity": "low"
+   },
+   {
+    "title": "project_members / reminders / routines 未校验目标用户是本工作区成员",
+    "detail": "pm_write 只要求操作者是 owner，user_id 可以是任意 uuid；r_insert 和 ro_insert 只校验发送者是成员，to_user 可以是任意 uuid（schema.sql:213-215,238；routines.sql:24）。UI 只列成员所以正常路径不会出错，但 API 层可写脏数据。修法：三处 with check 加 and exists (select 1 from workspace_members where workspace_id=... and user_id=to_user/user_id)。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:213-215,238；/Users/sara/Projects/parallel/supabase/routines.sql:24",
+    "severity": "low"
+   },
+   {
+    "title": "前端没有订阅 routines 的实时变化",
+    "detail": "routines 已加入 supabase_realtime publication（routines.sql:57-59），但 store.tsx:109 只订阅 5 张表，另一个人暂停/新建定时提醒、cron 回写 last_fired 都不会实时反映，要刷新页面。修法：订阅列表加 'routines'，refetch 分支加对应重拉。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx:99-123",
+    "severity": "low"
+   },
+   {
+    "title": "can_edit 列永远为 true，『只读分配』没有入口",
+    "detail": "project_members.can_edit 有默认值 true，前端 setProjectMember 只会 upsert can_edit:true 或删行（store.tsx:185-186），READ ME 描述的『没勾的她只能看』实际靠删行实现，can_edit=false 从未使用。要么删掉这列简化模型，要么在权限矩阵里做三态（无/只读/可编辑）。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:55；/Users/sara/Projects/parallel/src/state/store.tsx:184-189",
+    "severity": "low"
+   },
+   {
+    "title": "新建定时提醒若当天已过设定时刻会立即触发一次",
+    "detail": "run_routines 只判断 last_fired < 今天且当前时刻 >= 设定时刻（routines.sql:37-39），例如下午 3 点创建一条『每天 9:00』的提醒，下一个 10 分钟周期就会发一条。是否符合预期由 Sara 定；若不想，upsertRoutine 建时把 last_fired 设为创建当日（悉尼日期），或 run_routines 增加 created_at::date < local_now::date 条件。",
+    "file": "/Users/sara/Projects/parallel/supabase/routines.sql:37-39；/Users/sara/Projects/parallel/src/state/store.tsx:203-208",
+    "severity": "low"
+   },
+   {
+    "title": "定时提醒收件人不能暂停发给自己的规则",
+    "detail": "ro_update/ro_delete 只允许 created_by 或 owner（routines.sql:26-28），Sara 给 Miranda 设的每日 SEO/SEM 提醒，Miranda 自己不能暂停或调时间，只能找 Sara。前端 canManage 同样逻辑（Routines.tsx:18）。若要放开，两处加 or to_user = auth.uid()。",
+    "file": "/Users/sara/Projects/parallel/supabase/routines.sql:26-28；/Users/sara/Projects/parallel/src/components/Routines.tsx:18",
+    "severity": "low"
+   },
+   {
+    "title": "『个人任务』对全工作区可见",
+    "detail": "t_select 只看工作区成员身份（schema.sql:219），project_id 为 null 的任务 Sara 和 Miranda 互相都能看到且 owner 可改可删。README 称之为『个人任务』但并不私密。若要私密：t_select 加 (project_id is not null or created_by=auth.uid() or assignee_id=auth.uid())。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:218-219",
+    "severity": "low"
+   }
+  ],
+  "questions": [
+   "邮箱验证与注册开放：要不要保持 Supabase 的 Confirm email 开启？两人都注册完后是否直接关闭 Enable Sign Ups（最省事的防抢注方式）？",
+   "是否需要 owner 转让 / owner 退出？现状 Sara 永远是 owner 且不可交接；如果将来项目要交给 Miranda 或第三人，需要现在把 transfer_ownership 做进去。",
+   "移除成员后的数据处置：她创建的任务/项目保留归属还是清空 created_by？她被指派的任务要不要自动取消指派？指向她的定时提醒是暂停还是删除？重新邀请回来是否自动恢复之前的项目权限？",
+   "任务被指派人的权限边界：严格按 README『只能改状态』（需要加触发器限制字段），还是接受现状（能改标题、备注、截止、甚至移动到别的项目）？",
+   "有编辑权的成员能否归档项目？现状 API 层可以、界面藏了按钮；如果坚持『仅 owner 可归档』，需要加数据库层限制。",
+   "Miranda 能否自己暂停 / 调整 Sara 给她设的定时提醒？现状只能由创建者或 owner 操作。",
+   "『个人任务』（不挂项目）要不要对另一个人隐藏？现状全工作区可见且 owner 可改。",
+   "要不要支持『先注册、后被邀请』的路径？如果不支持，就在 handle_new_user 里改成没有邀请的用户不自建工作区（只保留 Sara 一个工作区），登录页提示联系管理员；如果支持，需要在前端做工作区选择。",
+   "删除账号时 created_by 的策略：set null（数据保留，显示为已离开成员）还是 cascade（数据随人删除）？这决定 FK 的修改方向。",
+   "定时提醒依赖 pg_cron，Supabase 免费版 7 天不用会暂停项目导致提醒停发；是否接受，或者需要一个保活手段（如 GitHub Actions 定时 ping）？"
+  ]
+ },
+ {
+  "area": "数据层与实时同步（src/state/store.tsx、src/lib/*.ts、supabase/schema.sql、supabase/routines.sql）",
+  "summary": "整个应用的数据层就是一个 React Context（StoreProvider），登录后先查 workspace_members 取\"第一个\"工作区，然后用 Promise.all 一次性把 8 张表（成员、profiles、邀请、项目、任务、项目权限、提醒、定时提醒）全量拉进内存，所有视图都从这份内存快照读。实时同步走一条 Supabase Realtime channel（ws-<wsId>），监听 projects/tasks/reminders/project_members/workspace_members 五张表的 postgres_changes，任何事件都触发\"把对应表整张重拉一遍\"（workspace_members 变化则重拉全部 8 张），不做增量合并。写操作统一是 upsert 整行后用返回行修补本地状态，只有标已读/删提醒/删定时提醒是先改本地再写库的乐观更新。权限有两层：前端 canEdit/canEditTask 决定按钮显隐，数据库 RLS 用 is_ws_owner/can_edit_project 等 security definer 函数做最终裁决，两层在\"项目编辑/建删\"上是一致的，但在\"任务负责人能改哪些字段\"上不一致。指派通知是纯客户端逻辑：upsertTask 发现 assignee 变成别人就往 reminders 插一条，收件方在线时靠 Realtime INSERT 事件弹浏览器 Notification；定时提醒由 pg_cron 每 10 分钟跑 run_routines() 生成 reminders 行。目前的数据规模（2 人、4 个项目）下这套\"全量重拉\"完全够用，主要风险不在性能而在几处同步漏洞和错误吞掉。",
+  "capabilities": [
+   "登录态：supabase.auth.getSession + onAuthStateChange 维护 session，persistSession/autoRefreshToken 开启 — /Users/sara/Projects/parallel/src/state/store.tsx L60-64、/Users/sara/Projects/parallel/src/lib/supabase.ts",
+   "工作区解析：按 created_at 取当前用户的第一条 workspace_members 记录作为 wsId 和 role — /Users/sara/Projects/parallel/src/state/store.tsx L66-73（loadMembership）",
+   "初始全量加载：8 张表 Promise.all 并行拉取，profiles 与 workspace_members 在客户端 join 成 Member[] — /Users/sara/Projects/parallel/src/state/store.tsx L75-95（loadAll）",
+   "实时同步：单 channel 监听 5 张表 postgres_changes，事件到达即整表重拉（workspace_members 触发 loadAll） — /Users/sara/Projects/parallel/src/state/store.tsx L100-125；publication 配置在 /Users/sara/Projects/parallel/supabase/schema.sql 末尾",
+   "在线浏览器通知：reminders INSERT 且 to_user 是自己且已授权时 new Notification('平行线提醒') — /Users/sara/Projects/parallel/src/state/store.tsx L113-118；授权按钮在 /Users/sara/Projects/parallel/src/views/Inbox.tsx L19",
+   "写操作：项目/任务 upsert 整行并用返回行修补本地数组，失败 toast '保存失败：' — /Users/sara/Projects/parallel/src/state/store.tsx L143-172",
+   "乐观更新（无回滚）：markRead、deleteReminder、deleteRoutine 先改本地再写库 — /Users/sara/Projects/parallel/src/state/store.tsx L196-203",
+   "前端权限函数：canEdit(projectId)（owner 全通过；无项目通过；否则查 project_members.can_edit）、canEditTask（owner / 负责人 / 无项目时创建者 / 否则 canEdit） — /Users/sara/Projects/parallel/src/state/store.tsx L127-136",
+   "数据库 RLS：is_ws_member / is_ws_owner / can_edit_project 三个 security definer 函数 + 8 张表逐表策略，项目建删仅 owner、项目改按 project_members、任务更新含 assignee_id = auth.uid() — /Users/sara/Projects/parallel/supabase/schema.sql L96-118、L170-233",
+   "邀请与入会：invitations 表 + on_auth_user_created（新注册按邀请入会，否则自建工作区当 owner）+ on_invitation_created（已注册用户被邀请时直接补进成员并删邀请） — /Users/sara/Projects/parallel/supabase/schema.sql L121-160",
+   "指派通知：upsertTask 中 assignee 变为他人时插入 reminders（消息含指派人名和截止日） — /Users/sara/Projects/parallel/src/state/store.tsx L160-166",
+   "定时提醒：routines 表 + run_routines()（按 tz/weekdays/hour/minute/last_fired 判定）+ pg_cron 每 10 分钟调度 — /Users/sara/Projects/parallel/supabase/routines.sql",
+   "updated_at 触发器：projects/tasks 更新时自动 touch — /Users/sara/Projects/parallel/supabase/schema.sql L162-168",
+   "PWA 壳：vite-plugin-pwa autoUpdate，仅预缓存静态资源，Supabase 请求不做离线缓存 — /Users/sara/Projects/parallel/vite.config.ts"
+  ],
+  "gaps": [
+   {
+    "title": "删除操作不会同步到对方：Realtime 过滤器在 DELETE 事件上失效",
+    "detail": "store.tsx 对 projects/tasks/reminders/workspace_members 用 filter `workspace_id=eq.<wsId>` 订阅。Supabase 文档明确：表未设 replica identity full 时，DELETE 事件只带主键，无法按非主键列过滤，因此这些 DELETE 事件根本不会投递。结果：Sara 删任务/删项目/移除成员，Miranda 那边一直显示旧数据，直到手动刷新。修法二选一：(a) 在 schema.sql 的实时推送段前加 `alter table public.tasks replica identity full;`（projects、reminders、workspace_members 同样），并在 Supabase SQL Editor 重跑；(b) 去掉 filter，事件到达时统一重拉（RLS 已保证 INSERT/UPDATE 只推可见行，DELETE 只拿到 id，重拉即可）。推荐 (a)+(b) 同时做，最稳。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L119-121；/Users/sara/Projects/parallel/supabase/schema.sql L236-250",
+    "severity": "high"
+   },
+   {
+    "title": "Miranda 若先注册后被邀请，会永远停在自己的空工作区",
+    "detail": "loadMembership 用 `.order('created_at').limit(1)` 取最早的一条成员关系。未被邀请就注册的人会由 handle_new_user 自建工作区成 owner；之后 Sara 发邀请，handle_new_invitation 把她加进 Sara 的工作区，但客户端仍选中她更早的自有工作区，她看不到 Sara 的任何项目，且界面无处切换。修法：loadMembership 改成优先选 role='member' 的记录（`.order('role', {ascending: false})` 或先查 member 再回退 owner），或在 handle_new_invitation 里检测被邀请者的自有工作区是否为空（无项目无任务）并删除之。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L68；/Users/sara/Projects/parallel/supabase/schema.sql L139-152",
+    "severity": "high"
+   },
+   {
+    "title": "加载与重拉全部吞掉错误，网络失败时把状态清空",
+    "detail": "loadAll 和 realtime refetch 全部写成 `(data || [])`，不检查 error。断网、JWT 过期、Supabase 免费版休眠时，所有列表会静默变成空数组，用户会以为数据丢了；loadMembership 失败时 wsId 置 null，App.tsx 显示'正在准备你的工作区…'这句误导性文案。修法：每个查询检查 `error`，出错时保留旧状态并 toast('同步失败，请检查网络')；loadMembership 区分'无记录'和'查询出错'两种情况，App.tsx 对应显示不同提示。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L76-95、L101-107；/Users/sara/Projects/parallel/src/App.tsx L24",
+    "severity": "high"
+   },
+   {
+    "title": "手机 PWA 切后台/电脑休眠后错过的事件不会补拉",
+    "detail": "WebSocket 断开期间的 postgres_changes 不会重放，supabase-js 重连后也没有任何'补一次全量'的逻辑；ch.subscribe() 没传状态回调，CHANNEL_ERROR/TIMED_OUT 也无人知晓。Miranda 早上打开手机上的 PWA 看到的可能是昨晚的快照。修法：(1) 在 realtime effect 里 `ch.subscribe(status => { if (status === 'SUBSCRIBED') loadAll(wsId); })`；(2) 加 `document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reload())` 和 `window.addEventListener('online', reload)`。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L123-125",
+    "severity": "high"
+   },
+   {
+    "title": "整行 upsert 导致两人并发编辑时互相覆盖",
+    "detail": "upsertProject/upsertTask 都把整个对象（`{...p, prd: v}`、`{...t, status}`）写回，是列级 last-writer-wins。场景：Sara 在项目页点完成一个阶段，Miranda 800ms 后 PRD 自动保存把她本地的旧 stages 一起写回，Sara 的阶段变更被抹掉；看板拖动同样会把旧 note/due 写回。修法：已有 id 的记录改用 `supabase.from('projects').update({ prd }).eq('id', id)` 这种字段级更新，upsert 只留给新建；调用方（onPrd、toggleStage、setStageDue、Board 拖拽、TaskRow toggle）只传变化字段。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L143-147、L153-158；/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx L32-40；/Users/sara/Projects/parallel/src/views/Board.tsx L19；/Users/sara/Projects/parallel/src/components/TaskRow.tsx L13",
+    "severity": "medium"
+   },
+   {
+    "title": "任务负责人权限：前端放开全部字段，RLS 只允许改到自己名下的行",
+    "detail": "README 口径是'负责人能改自己被指派任务的状态'，但 canEditTask 对负责人返回 true 后 TaskDialog 允许改项目、改负责人、删除。RLS 侧 t_update 没写 with check（默认等于 using），所以 Miranda（非项目成员）把任务改派给 Sara 时新行 assignee_id ≠ 自己 → 被拒；t_delete 根本不含 assignee 条件 → 删除被拒。用户只会看到一句'new row violates row-level security policy'。修法看 Sara 拍板：要么前端对'仅因负责人而可编辑'的情况只开放状态/备注/截止，隐藏删除；要么在 schema.sql 给 t_update 加显式 with check、t_delete 加 assignee_id 条件。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L131-135；/Users/sara/Projects/parallel/src/components/Dialogs.tsx L14、L57；/Users/sara/Projects/parallel/supabase/schema.sql L212-222",
+    "severity": "medium"
+   },
+   {
+    "title": "routines 表加进了 publication 但客户端没订阅",
+    "detail": "Sara 给 Miranda 建定时提醒，Miranda 的定时提醒列表不会出现；run_routines 更新 last_fired 后界面'上次 x/x'也不刷新，直到整页刷新。修法：store.tsx 订阅表列表加 'routines'，refetch 分支复用 loadRoutines。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L108、L119；/Users/sara/Projects/parallel/supabase/routines.sql L52-54",
+    "severity": "medium"
+   },
+   {
+    "title": "指派通知 fire-and-forget，且'希望处理时间'只是展示不投递",
+    "detail": "upsertTask 里 reminders.insert 用 `.then(() => {})` 不看结果，插入失败（RLS、网络）无任何提示，指派人以为对方收到了。改派 A→B→A→B 会发多条，取消指派不通知，改截止日不通知。另外 ReminderDialog 的 remind_at 只在收件箱显示'希望 x 前'，提醒是发送即达，不是到点再弹。修法：await 并 toast 结果；remind_at 若要到点投递，可给 reminders 加 deliver_at 列并让 run_routines 顺带扫描，或在客户端仅在 now ≥ remind_at 时才计入未读和弹通知。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L160-166、L188-194；/Users/sara/Projects/parallel/src/components/Dialogs.tsx L149",
+    "severity": "medium"
+   },
+   {
+    "title": "应用关闭时没有任何提醒通道",
+    "detail": "Notification 只在页面存活且 Realtime 连着时触发。Miranda 每天 9:00 的 SEO/SEM 定时提醒，如果她没开着应用就只会静静躺在收件箱。README 已列为第二阶段，但这是运营线日常使用的核心场景。可选路线：(a) Web Push：Edge Function + VAPID + service worker push handler，iOS 需加到主屏幕；(b) 邮件：run_routines 里用 pg_net 调 Resend/Supabase SMTP，最省事；(c) 飞书/微信机器人 webhook。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L113-118；/Users/sara/Projects/parallel/supabase/routines.sql L28-44",
+    "severity": "medium"
+   },
+   {
+    "title": "乐观更新无回滚、无错误提示",
+    "detail": "markRead / deleteReminder / deleteRoutine 先改本地再 await 写库，写库失败既不恢复本地状态也不 toast，下次 realtime 重拉时数据'诈尸'。修法：保存旧状态，`if (error) { 恢复; toast(...) }`。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L196-203、L210",
+    "severity": "low"
+   },
+   {
+    "title": "重复拉取与 token 刷新触发全量重载",
+    "detail": "自己写入后本地已修补，Realtime 事件又整表重拉一次；sendReminder/setProjectMember 手动重拉后 Realtime 再拉一次；workspace_members 任一事件触发 8 条查询。另外 loadMembership 依赖 `user` 对象引用，每次 TOKEN_REFRESHED（约 1 小时）都会生成新的 reload 并触发 useEffect 全量重载。当前规模无感，但可顺手改：loadMembership 依赖改为 user?.id；手动重拉的地方删掉交给 Realtime。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L66、L97、L182-183、L191",
+    "severity": "low"
+   },
+   {
+    "title": "profiles 不在实时推送里，改名对方看不到",
+    "detail": "updateName 后只有自己 loadAll，对方的 members 里 display_name 仍是旧值直到刷新。修法：schema.sql 把 profiles 加进 supabase_realtime，store.tsx 订阅并在事件时重拉 workspace_members+profiles。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L211；/Users/sara/Projects/parallel/supabase/schema.sql L236-250",
+    "severity": "low"
+   },
+   {
+    "title": "run_routines() 可被任意登录用户通过 RPC 调用",
+    "detail": "security definer 函数默认对 anon/authenticated 开放 execute，`POST /rest/v1/rpc/run_routines` 可手动触发。因函数内有时间判定，危害只是提前最多 10 分钟触发，但应收口：routines.sql 末尾加 `revoke execute on function public.run_routines() from anon, authenticated;`。",
+    "file": "/Users/sara/Projects/parallel/supabase/routines.sql L28-44",
+    "severity": "low"
+   },
+   {
+    "title": "DELETE 事件不受 RLS 约束，跨工作区可见主键",
+    "detail": "Supabase 文档：RLS 不作用于 DELETE 事件。若去掉 filter（见第 1 条修法 b），任何登录用户都会收到所有工作区的删除事件（仅含 id）。目前只有 1 个工作区、公开注册开着，属于理论泄露；若保留 filter+replica identity full 则无此问题。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx L119-121",
+    "severity": "low"
+   }
+  ],
+  "questions": [
+   "任务负责人（Miranda 被指派但不是该项目成员）到底能改什么？README 说只能改状态，代码前端放开了全部字段但数据库会拒绝改派/删除。二选一：收窄前端（只开状态/备注/截止）还是放宽 RLS（负责人可改全部含删除）？",
+   "应用关闭时的提醒通道选哪条：Web Push（工程量最大，iOS 需加到主屏幕）、邮件（run_routines 里 pg_net 调 Resend，最省事）、还是飞书机器人 webhook？Miranda 每天 9 点看 SEO/SEM 的定时提醒依赖这个才有意义。",
+   "提醒里的'希望对方什么时候处理'要不要改成到点才投递/才弹通知？现在是发出即达，这个时间只是展示。",
+   "PRD 是否允许两人同时编辑同一个项目？允许的话必须改成字段级更新（第 5 条）；不允许的话可以简单处理成'非 owner 打开 PRD 时若 5 分钟内有他人保存则只读'。",
+   "Miranda 现在是否已经用邀请邮箱注册过？若她之前自己注册过（有自己的空工作区），需要先按第 2 条修 loadMembership 或手动在数据库删掉她的自有工作区，否则她登录后看不到你的项目。",
+   "两人都注册完成后，是否在 Supabase Auth 里关闭 'Allow new users to sign up'？anon key 随仓库公开，目前任何人拿到地址都能注册并自建工作区（RLS 隔离，无数据风险，但会占免费额度）。",
+   "任务数据预期规模：如果一年内会累积到上千条任务，需要给已完成任务加归档/按时间分页，否则每次 Realtime 事件都整表重拉；如果预期在几百条以内，现在的全量方案可以不动。"
+  ]
+ },
+ {
+  "area": "PWA 与部署",
+  "summary": "这一块负责把「平行线」从一个 React 单页应用变成可安装、可离线打开、能自动更新的 PWA，并通过 GitHub Actions 自动构建发布到 GitHub Pages（线上地址 https://dryan3333.github.io/parallel/，已验证资源路径和 manifest scope 都正确）。当前实现是 vite-plugin-pwa 的默认 generateSW 方案：所有构建产物预缓存、导航回退到 index.html、新版本 Service Worker 一激活就强制刷新页面；安装体验有 Chrome/Edge/Android 的「安装应用」按钮和 iOS 的 apple-touch-icon 元信息，手机端有底部导航和安全区适配。部署流程是 push main 即构建，Supabase 的公开 URL 与 publishable key 直接提交在 .env.production 里随仓库公开（仓库本身是 public），安全边界完全靠数据库 RLS，经核对 RLS 按工作区隔离得很严。最大的空白是推送通知：数据库端已有 pg_cron 每 10 分钟生成定时提醒，但没有 push 订阅表、VAPID 密钥、Edge Function 和 SW push 处理器，Miranda 只有在应用开着时才会收到系统通知，而且 Android 上的通知调用方式本身就是错的。其次是更新策略只在页面加载时检查一次、离线打开后是一个误导性的死屏、数据库 schema 靠手工在 SQL Editor 粘贴。",
+  "capabilities": [
+   "Service Worker 预缓存：vite-plugin-pwa（generateSW 模式）把 index.html、JS/CSS、四个图标、manifest 全部预缓存，并注册 NavigationRoute 回退到 index.html，应用外壳可离线启动、二次打开秒开；旧缓存由 cleanupOutdatedCaches 清理 —— /Users/sara/Projects/parallel/vite.config.ts",
+   "自动更新：registerType 为 autoUpdate，SW 里 skipWaiting + clientsClaim，客户端 registerSW({ immediate: true })；新 SW 激活（isUpdate）时 workbox-window 会直接 window.location.reload()，用户无需手动操作即可拿到新版本 —— /Users/sara/Projects/parallel/src/main.tsx、node_modules/vite-plugin-pwa/dist/client/build/register.js",
+   "安装清单：manifest 含 name/short_name/description、display standalone、theme/background 色 #F5F6F3、192/512 图标及 maskable 图标；线上 manifest 的 scope 已正确生成为 /parallel/ —— /Users/sara/Projects/parallel/vite.config.ts、/Users/sara/Projects/parallel/public/",
+   "iOS 安装元信息：index.html 有 apple-touch-icon、apple-mobile-web-app-capable、viewport-fit=cover；CSS 用 env(safe-area-inset-*) 处理顶栏、底部 tabbar、toast 的刘海/Home 条安全区 —— /Users/sara/Projects/parallel/index.html、/Users/sara/Projects/parallel/src/styles.css:19,31,214,248-249",
+   "桌面/Android 安装按钮：App 捕获 beforeinstallprompt 事件，顶栏显示「安装应用」按钮，点击调用 prompt()，安装后按钮消失 —— /Users/sara/Projects/parallel/src/App.tsx:18-22,36",
+   "手机底部导航：640px 以下切换为固定底部 tabbar（今天/本周/看板/项目/提醒/成员），带未读角标 —— /Users/sara/Projects/parallel/src/App.tsx:38、src/styles.css:245-252",
+   "GitHub Pages 自动部署：push main 或手动 workflow_dispatch 触发；Node 20 + npm ci + tsc --noEmit + vite build；VITE_BASE 自动设为 /<仓库名>/；upload-pages-artifact → deploy-pages；并发取消旧任务；权限最小化（contents read / pages write / id-token write）—— /Users/sara/Projects/parallel/.github/workflows/deploy.yml",
+   "配置零依赖 Secrets：Supabase URL 和 publishable key 提交在 .env.production（git 已跟踪），本地 .env 被 .gitignore 排除；supabase.ts 缺配置时用占位地址兜底并暴露 configured 标志 —— /Users/sara/Projects/parallel/.env.production、/Users/sara/Projects/parallel/src/lib/supabase.ts",
+   "登录态持久化：persistSession + autoRefreshToken，安装后的应用保持登录不需要每次输密码 —— /Users/sara/Projects/parallel/src/lib/supabase.ts:8",
+   "应用开着时的系统通知：提醒页有「打开通知」按钮请求 Notification 权限；Realtime 监听 reminders INSERT，发给自己的提醒会 new Notification() 弹窗 —— /Users/sara/Projects/parallel/src/views/Inbox.tsx:10-18、/Users/sara/Projects/parallel/src/state/store.tsx:110-118",
+   "服务端定时提醒（推送的前置基础）：routines 表 + run_routines() 函数 + pg_cron 每 10 分钟按周几/时间/时区生成 reminders 行，不依赖客户端在线 —— /Users/sara/Projects/parallel/supabase/routines.sql",
+   "指派任务自动生成提醒：改任务负责人时向被指派人插入一条 reminders，走同一条通知链路 —— /Users/sara/Projects/parallel/src/state/store.tsx（upsertTask）"
+  ],
+  "gaps": [
+   {
+    "title": "推送通知基础设施完全缺失，应用关闭时收不到任何提醒",
+    "detail": "现状：没有 push_subscriptions 表、没有 VAPID 密钥、没有 Edge Function、SW 是 generateSW 自动生成的，无法加 push/notificationclick 处理器。Miranda 每天要看 SEO/SEM 的定时提醒（pg_cron 已经在生成 reminders 行）只有在她把应用开着并且 Realtime 通道连着时才会弹。可执行步骤：(1) 生成 VAPID 密钥对，公钥放 .env.production 的 VITE_VAPID_PUBLIC_KEY，私钥放 Supabase Edge Function secrets；(2) schema.sql 新增 push_subscriptions(user_id, endpoint unique, p256dh, auth, user_agent, created_at)，RLS 只允许本人读写；(3) vite.config.ts 改 strategies: 'injectManifest'、srcDir: 'src'、filename: 'sw.ts'，在 sw.ts 里保留 precacheAndRoute + NavigationRoute，加 push 事件 showNotification 和 notificationclick 打开 /parallel/#inbox；(4) Inbox.tsx「打开通知」按钮授权后调用 registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey }) 并 upsert 到表；(5) 新建 supabase/functions/send-push（Deno + web-push），由 Database Webhook 监听 reminders INSERT 触发，或在 run_routines() 里用 pg_net 调用；(6) iOS 需 16.4+ 且已添加到主屏幕才能收推送，需在界面提示。",
+    "file": "/Users/sara/Projects/parallel/vite.config.ts；/Users/sara/Projects/parallel/src/main.tsx；/Users/sara/Projects/parallel/supabase/schema.sql；新建 /Users/sara/Projects/parallel/supabase/functions/send-push/",
+    "severity": "high"
+   },
+   {
+    "title": "Android 上「应用开着时」的通知也是坏的：页面里 new Notification() 会抛错被吞掉",
+    "detail": "Android Chrome 不允许在页面上下文用 new Notification() 构造，会抛 TypeError（要求用 ServiceWorkerRegistration.showNotification），代码用 try/catch 静默吞掉，结果 Miranda 手机上即使授权了也永远不弹。改法：store.tsx:115-116 改为 navigator.serviceWorker.ready.then(r => r.showNotification('平行线提醒', { body: r.message, tag: reminder.id }))，桌面和 Android 都能用；顺手加 tag 避免同一条提醒重复弹。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx:115-116",
+    "severity": "medium"
+   },
+   {
+    "title": "更新只在页面加载时检查一次；长期开着的安装版永远拿不到新版本，而一旦检查到又会无预警强制刷新",
+    "detail": "路由是 hash 路由，没有任何真实导航，所以 SW 只在 registerSW 那一刻检查更新；Mac 上装成应用后连开几天，Sara 发布了十几个版本 Miranda 那边仍是旧版（缓存导致旧版本的真实来源就在这里，不是 GitHub Pages 的 max-age=600，那个 SW 会绕过）。反过来 autoUpdate 模式下 register.js 在 activated 事件里直接 window.location.reload()，如果以后加了周期检查，用户正在 PRD 对话框里打字时会被刷掉。改法（二选一）：A. 保持 autoUpdate，在 main.tsx 用 registerSW({ immediate: true, onRegisteredSW(_, r) { setInterval(() => r?.update(), 60*60*1000); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && r?.update()); } })，接受偶发刷新；B. 改 registerType: 'prompt'，onNeedRefresh 时用现有 toast 机制显示「有新版本，点击刷新」，由用户决定何时 reload，这是对正在编辑的人更安全的做法。建议 B。",
+    "file": "/Users/sara/Projects/parallel/src/main.tsx:8；/Users/sara/Projects/parallel/vite.config.ts:10",
+    "severity": "high"
+   },
+   {
+    "title": "离线打开是一个误导性的死屏，而不是可读的上次数据",
+    "detail": "外壳能离线启动，但数据没有任何本地缓存：localStorage 里的 session 让 ready=true → loadMembership 网络失败 → data 为 undefined（代码只解构 data 不看 error）→ wsId=null → 显示「正在准备你的工作区… 重试」，用户会以为自己被踢出了工作区。同时 Google Fonts 外链样式没有 runtimeCaching，离线时字体回退。改法：(1) store.tsx loadMembership/loadAll 检查 error，网络错误时保留上次状态并显示「离线」横幅（navigator.onLine + online/offline 事件）；(2) 把 projects/tasks/reminders/members 快照按 wsId 写进 localStorage，启动时先水合再拉网，Today/Board 离线可只读；(3) vite.config.ts 的 workbox.runtimeCaching 加 fonts.googleapis.com（StaleWhileRevalidate）和 fonts.gstatic.com（CacheFirst，一年）。如果 Sara 认为离线只读不重要，至少做 (1) 把错误提示改准确。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx:64-70；/Users/sara/Projects/parallel/src/App.tsx:26；/Users/sara/Projects/parallel/vite.config.ts",
+    "severity": "medium"
+   },
+   {
+    "title": "密钥暴露面：公开仓库 + 公开 anon key + 开放注册 = 任何人都能在 Sara 的 Supabase 项目里开工作区",
+    "detail": "已核实数据层是安全的：profiles_select、wm_select、pr_select 等全部按工作区隔离，陌生人注册后读不到 Sara/Miranda 的任何数据。但 handle_new_user 对未受邀邮箱会自动建一个新工作区并设为 owner，README 又建议关掉邮箱验证，仓库是 public 的（.env.production 里的 URL 和 key 谁都能看到）。实际风险是免费额度被占用（Auth MAU、500MB 数据库、Realtime 连接数）和垃圾账号。改法（按成本排序）：(1) Miranda 注册完成后，在 Supabase Dashboard → Authentication → Sign In/Providers 关掉「Allow new users to sign up」，以后再邀请人时临时打开；(2) 或者改 handle_new_user：没有邀请且 workspaces 表已非空时 raise exception '仅限邀请注册'，保留首个账号自举逻辑；(3) 把仓库改 private（注意 GitHub Pages 私有仓库需要 Pro 付费）。另外 publishable key 若日后怀疑被滥用，可在 Dashboard 里轮换，然后改 .env.production 重新推送即可。",
+    "file": "/Users/sara/Projects/parallel/supabase/schema.sql:114-131；/Users/sara/Projects/parallel/.env.production；/Users/sara/Projects/parallel/README.md",
+    "severity": "medium"
+   },
+   {
+    "title": "数据库 schema 不在部署流水线里，靠手工粘贴 SQL Editor 且无版本记录",
+    "detail": "deploy.yml 只管前端。schema.sql 和 routines.sql 要人肉在 Supabase SQL Editor 里按顺序执行，没有任何地方记录线上库当前跑到哪个版本；下次改表（比如加 push_subscriptions）很容易前端先上线、库没改、页面报错。改法：supabase init 后把两个文件拆进 supabase/migrations/<时间戳>_*.sql，deploy.yml 加一个 job 用 supabase/setup-cli 执行 supabase db push（需要在仓库 Secrets 放 SUPABASE_ACCESS_TOKEN、SUPABASE_DB_PASSWORD、SUPABASE_PROJECT_ID），前端 build 依赖它成功。最低限度也应在 README 加一段「线上库已执行到：routines.sql（2026-09-14）」的记录。",
+    "file": "/Users/sara/Projects/parallel/.github/workflows/deploy.yml；/Users/sara/Projects/parallel/supabase/",
+    "severity": "medium"
+   },
+   {
+    "title": "iPhone 上没有任何安装引导，安装按钮在 Safari 永远不出现",
+    "detail": "beforeinstallprompt 只有 Chrome/Edge/Android 支持，iOS Safari 没有；Miranda 用 iPhone 时看不到「安装应用」，也没有人告诉她要点分享 → 添加到主屏幕（而这一步又是将来 iOS 收推送的前提）。改法：App.tsx 判断 /iPhone|iPad/.test(navigator.userAgent) && !(navigator as any).standalone 时，在顶栏或首次登录后显示一次性提示「Safari 底部分享按钮 → 添加到主屏幕」，可关闭并用 localStorage 记住。",
+    "file": "/Users/sara/Projects/parallel/src/App.tsx:18-22,36",
+    "severity": "low"
+   },
+   {
+    "title": "manifest 与 index.html 的小瑕疵：lang 为 en、缺 theme-color meta、缺 id",
+    "detail": "线上 manifest 的 lang 是 en（应为 zh-CN）；index.html 没有 <meta name=\"theme-color\" content=\"#F5F6F3\">，Android 浏览器地址栏和桌面安装版窗口标题栏不会跟品牌色；manifest 没有 id 字段，将来换 start_url 会被浏览器当成另一个应用。改法：vite.config.ts manifest 加 lang: 'zh-CN'、id: '/parallel/'，index.html head 加 theme-color meta。",
+    "file": "/Users/sara/Projects/parallel/vite.config.ts:12-24；/Users/sara/Projects/parallel/index.html",
+    "severity": "low"
+   },
+   {
+    "title": "构建失败时 Pages 静默保留旧版本，没有主动告警",
+    "detail": "build 里 tsc --noEmit 一旦报错，Actions 失败、线上停留在上一个版本，Sara 只有去 Actions 页才知道（GitHub 默认会发失败邮件到账号邮箱，前提是没关通知）。两人项目可接受，但建议在 README 写明「推送后到 Actions 页确认绿勾」，并在 deploy.yml 加 pull_request 触发的 build-only job，让改动在合并前就能看到能否编译。",
+    "file": "/Users/sara/Projects/parallel/.github/workflows/deploy.yml",
+    "severity": "low"
+   }
+  ],
+  "questions": [
+   "推送通知是否现在就做（README 标为第二阶段）？这是让 Miranda 每天准时看到 SEO/SEM 提醒的唯一可靠方式，要动 SW 策略（改 injectManifest）、加表、加 Edge Function，是这一块最大的一笔工作量。",
+   "更新策略选哪种：A 保持自动刷新但加每小时/切回前台检查（简单，偶尔会打断正在编辑的人）；B 改成「有新版本，点击刷新」提示（对正在写 PRD 的人安全，但需要用户点一下）。",
+   "离线是否要做到可读？如果 Miranda 主要在有网的电脑上用，可以只把离线时的错误提示改准确；如果希望地铁上能看今天的任务，就要做本地快照缓存。",
+   "Miranda 注册完成后是否立刻在 Supabase 关闭「允许新用户注册」？关掉后再邀请第三人需要临时打开；不关的话任何人拿到链接都能在你的免费项目里开账号。",
+   "仓库要不要改成私有？改私有后 GitHub Pages 需要 GitHub Pro（个人约 US$4/月），否则保持公开，接受 URL 和 publishable key 可见（数据层已确认安全）。",
+   "数据库 schema 要不要纳入流水线（supabase db push）？需要把 Supabase 的 access token 和数据库密码放进仓库 Secrets；不做的话至少要在 README 记录线上库执行到了哪个 SQL 文件。"
+  ]
+ },
+ {
+  "area": "界面与交互（App shell、Today/Week/Board/Projects/ProjectDetail/Inbox/Members 七个视图、Garden/Dialogs/Modal/Routines/Stepper/TaskRow/Tags 组件、styles.css）",
+  "summary": "前端是一个单文件 hash 路由的 React 应用（/Users/sara/Projects/parallel/src/App.tsx），七个视图各解决一个问题：Today 是每日工作台（花园 + 项目卡 + 逾期/今天/进行中/7 天分组 + 快速添加），Week 是按周排期（拖卡片改截止日），Board 是三列看板（拖拽或箭头改状态），Projects 是产品/运营两条线的项目列表（owner 建项目），ProjectDetail 是项目工作区（可编辑标题、阶段 Stepper、Markdown PRD 自动保存、任务、阶段计划、协作者），Inbox 是双向提醒收发箱 + 定时提醒（Routines），Members 是成员/邀请/权限矩阵/个人资料。桌面端整体完成度约 75%，视觉体系（浅/深色、产品蓝/运营绿、衬线标题）一致，空状态基本齐全，权限判断（canEdit/canEditTask）在各视图前置做了拦截并 toast。最大的短板集中在手机端和「Miranda 每天看 SEO/SEM」这个核心场景：HTML5 拖拽在触屏上完全不工作（Week 没有任何替代操作），提醒只有应用开着才会弹（后台推送在 README 已声明是第二阶段），定时提醒会让收件箱无限堆积且没有批量已读；无障碍方面任务标题/阶段 Stepper/看板卡片都是不可聚焦的 span，toast 没有 aria-live。Garden 目前是「项目阶段进度的静态插画」而不是 README 里描述的 Forest/Flora 式成长花园，每日成果不累积。",
+  "capabilities": [
+   "App shell：hash 路由（today/week/board/projects/p/:id/inbox/members），桌面顶部导航 + ≤640px 底部 Tab 栏，提醒未读红点，Chrome/Edge 的「安装应用」按钮，载入/未配置/无工作区三种前置状态 — /Users/sara/Projects/parallel/src/App.tsx",
+   "Today：日期标题 + 逾期/今天/进行中计数，「全部 / 只看我的」筛选，项目卡（当前阶段 + 截止色标 + 待办数），快速添加任务（标题/项目/日期，负责人默认自己），已逾期/今天/进行中/未来 7 天/今天完成五个分组，无安排空状态 — /Users/sara/Projects/parallel/src/views/Today.tsx",
+   "Garden：每个项目一株 SVG 植物，茎高 = 已完成阶段比例，每完成一段长一片叶，全部完成开花，当前阶段逾期变黄，当天完成的任务在地面开小花（上限 14），点击植株跳项目，带 <title> 与 aria-label — /Users/sara/Projects/parallel/src/components/Garden.tsx",
+   "Week：周一到周日 7 列 + 「未排期」列，上周/本周/下周切换，拖卡片到某列改截止日（拖到未排期清空），已完成任务淡化显示，权限不足时 toast 拦截 — /Users/sara/Projects/parallel/src/views/Week.tsx",
+   "Board：待办/进行中/完成三列，全部/产品/运营筛选，拖拽换列或 ←/→ 按钮换列（触屏可用），完成时写 done_at，列内按截止日排序，每列计数与空状态 — /Users/sara/Projects/parallel/src/views/Board.tsx",
+   "Projects：产品线/运营线两条并行 lane，项目卡显示目标、mini Stepper、待办数、协作者、PRD 字数；owner 可新建；已归档项目以 chip 列出，owner 点击恢复 — /Users/sara/Projects/parallel/src/views/Projects.tsx",
+   "ProjectDetail：返回/类型标签/当前阶段与截止/只读标记，contentEditable 标题重命名（Enter 提交），Stepper 点击切换阶段（级联：完成某阶段则之前全完成，取消则之后全取消），PRD 编辑/预览分段（800ms 防抖自动保存 + 「已保存 hh:mm」提示，marked 渲染并转义 <），任务列表（未完成优先）+ 行内添加，阶段计划面板（键盘可用的自定义 checkbox + 日期），owner 的协作者勾选，项目不存在的兜底 — /Users/sara/Projects/parallel/src/views/ProjectDetail.tsx",
+   "Inbox：收到的/发出的两栏，未读高亮，标为已读/未读、删除，显示关联任务标题与「希望 X 前」，发提醒对话框（成员 <2 时禁用），系统通知授权提示，实时收到新提醒时弹 Notification（应用打开时）— /Users/sara/Projects/parallel/src/views/Inbox.tsx、/Users/sara/Projects/parallel/src/state/store.tsx",
+   "Routines（定时提醒）：选人/内容/时间（10 分钟步进）/星期 chips（默认周一到五），列表显示上次触发日期，创建者或 owner 可暂停/启用/删除；后端 pg_cron 每 10 分钟按悉尼时间写入 reminders — /Users/sara/Projects/parallel/src/components/Routines.tsx",
+   "Members：成员列表（角色标签、owner 可移除并 confirm）、邀请表单 + 待注册 chips（点击撤销）、我的资料（显示名、退出登录）、owner 的项目×成员权限矩阵（横向可滚动）— /Users/sara/Projects/parallel/src/views/Members.tsx",
+   "Dialogs：任务（标题/项目/截止/负责人/状态/优先级/备注，按权限只读态、删除）、项目（名称/类型仅新建可选/一句话目标，新建自动套阶段与 PRD 模板并跳转，owner 归档/删除 confirm）、阶段编辑（增删改名与日期）、发提醒（对象/内容/期望处理时间）；指派他人时自动生成一条提醒 — /Users/sara/Projects/parallel/src/components/Dialogs.tsx、/Users/sara/Projects/parallel/src/state/store.tsx",
+   "Modal：原生 <dialog>.showModal（Esc 关闭、焦点圈定、点击遮罩关闭），关闭后卸载表单重置状态 — /Users/sara/Projects/parallel/src/components/Modal.tsx",
+   "TaskRow：role=checkbox + 空格/回车切换完成，标题点开编辑，项目/负责人/截止标签，手机端标签折到第二行 — /Users/sara/Projects/parallel/src/components/TaskRow.tsx",
+   "Login：登录/注册切换（注册带显示名），错误信息回显，未配置 Supabase 提示，被邀请者说明 — /Users/sara/Projects/parallel/src/views/Login.tsx",
+   "样式体系：CSS 变量浅/深色（prefers-color-scheme），产品蓝/运营绿双色，:focus-visible 描边，prefers-reduced-motion，safe-area 内边距，各栅格在 640/760/820/900px 断点降级为单列，Board 手机端堆叠、Week/Garden/矩阵横向滚动 — /Users/sara/Projects/parallel/src/styles.css",
+   "PWA：vite-plugin-pwa 自动更新、manifest 与图标、viewport-fit=cover — /Users/sara/Projects/parallel/vite.config.ts、/Users/sara/Projects/parallel/index.html"
+  ],
+  "gaps": [
+   {
+    "title": "Week 视图在手机上核心操作失效：HTML5 拖拽不支持触屏，且没有替代操作",
+    "detail": "Week 唯一的改期手段是 draggable/onDrop（触屏浏览器不触发 dragstart），手机上只能点开卡片在对话框改日期；Board 至少有 ←/→ 按钮兜底，Week 没有。可执行方案：(a) 在 wcard 上加一个「移到…」小按钮弹出日期选择（或「+1 天 / 下周同日 / 未排期」快捷项）；(b) 或用 Pointer Events 自实现拖拽（onPointerDown/Move/Up + elementFromPoint 命中列），同时覆盖 Board。另外 .week 是 8 列 minmax(130px) 横向滚动，375px 宽屏一屏只看到 2.5 列，建议 ≤640px 改为按天纵向列表。",
+    "file": "/Users/sara/Projects/parallel/src/views/Week.tsx；/Users/sara/Projects/parallel/src/styles.css（.week）",
+    "severity": "high"
+   },
+   {
+    "title": "定时提醒会让收件箱无限堆积，没有批量已读/删除，也没有「今日待看」收敛",
+    "detail": "Miranda 每天 9:00 收到「看 SEO/SEM」提醒后，Inbox「收到的」每天多一条，一个月 20+ 条，只能逐条点已读/删除。同时 reminders 查询无分页无上限。可执行：Inbox 加「全部标为已读」「清除已读」按钮（store 增加批量 update/delete）；列表默认只展示未读 + 最近 7 天已读，其余折叠；由 routine 生成的提醒带 routine_id 标记，同一 routine 当天再次触发时替换而非追加（后端 run_routines 已有 last_fired 可配合）。",
+    "file": "/Users/sara/Projects/parallel/src/views/Inbox.tsx；/Users/sara/Projects/parallel/src/state/store.tsx（markRead/deleteReminder）",
+    "severity": "high"
+   },
+   {
+    "title": "提醒只在应用打开时弹出；iOS 上完全没有引导（安装到主屏幕才有 Notification API）",
+    "detail": "store 里的 Notification 只在 realtime 通道收到 INSERT 时触发，应用关闭就收不到；README 已把 Web Push 列为第二阶段。但界面层面现在也缺提示：iOS Safari 未安装时 typeof Notification === 'undefined'，Inbox 的授权提示整段隐藏，用户不知道要「添加到主屏幕」。可执行：App.tsx 检测 iOS && !navigator.standalone 时显示一条「添加到主屏幕后才能收到提醒」提示（带关闭并记 localStorage）；Inbox 里在不支持 Notification 时显示同样说明，而不是什么都不显示。",
+    "file": "/Users/sara/Projects/parallel/src/views/Inbox.tsx（perm/canNotify）；/Users/sara/Projects/parallel/src/App.tsx（installEvt 仅 Chrome/Edge）",
+    "severity": "high"
+   },
+   {
+    "title": "Today 快速添加的项目下拉没有按权限过滤，Miranda 选到未分配项目会保存失败",
+    "detail": "Today.tsx 的 select 列出所有 ps（未归档项目），TaskDialog 里则用 editableProjects = canEdit 过滤。Miranda 选「Jarvis Solar CRM」提交后被 RLS 拒绝，只看到 toast「保存失败：new row violates row-level security…」。可执行：Today 的 ps 改为 projects.filter(p => !p.archived && canEdit(p.id))，并在 ProjectDetail 的行内添加表单已受 editable 保护的基础上保持一致。",
+    "file": "/Users/sara/Projects/parallel/src/views/Today.tsx（第 385、419 行附近）",
+    "severity": "medium"
+   },
+   {
+    "title": "TaskDialog 编辑「我是负责人但项目未分配给我」的任务时，项目下拉显示成「不关联项目」",
+    "detail": "editableProjects 只含 canEdit 的项目，Miranda 作为负责人打开 Sara 项目里的任务，select 的 value 不在 option 里，React 回退显示第一项「不关联项目」，一旦她碰了下拉就只能把任务移出项目。可执行：options 里始终追加当前 f.project_id 对应的项目（标注「（只读）」并 disabled），或当 !canEdit(f.project_id) 时整个项目 select disabled。",
+    "file": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog editableProjects）",
+    "severity": "medium"
+   },
+   {
+    "title": "删除任务没有确认也没有撤销",
+    "detail": "TaskDialog 的「删除」按钮直接 deleteTask 并 toast「已删除」；项目删除有 confirm，任务没有。两人协作里误删对方的任务无法恢复。可执行：至少加 confirm；更好的做法是 toast 带「撤销」按钮，5 秒内可 upsertTask 回原对象（toast 组件需支持 action）。",
+    "file": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog acts）",
+    "severity": "medium"
+   },
+   {
+    "title": "Board「完成」列无限增长，没有时间窗或归档",
+    "detail": "Board 把所有 status=done 的任务都渲染在第三列，几个月后几百张卡；手机端三列纵向堆叠，完成列把页面拉得很长。可执行：完成列默认只显示 done_at 在最近 14 天内的任务，列头加「显示全部」切换；或与 Today 一致按 done_at 分组折叠。",
+    "file": "/Users/sara/Projects/parallel/src/views/Board.tsx（COLS/items 过滤）",
+    "severity": "medium"
+   },
+   {
+    "title": "任务标题、看板卡片、周卡片、Stepper 阶段都是不可聚焦的 span，键盘/读屏无法操作",
+    "detail": "TaskRow .t、Board .card .t、Week .wcard、Stepper .step 都用 onClick 的 span，没有 tabIndex/role/onKeyDown；Stepper 有「阶段计划」面板里的 checkbox 作替代，但任务标题没有任何键盘入口。可执行：把这些 span 改为 <button type=\"button\" className=\"linklike\">（CSS 重置边框背景），Stepper step 加 role=\"button\" tabIndex=0 + Enter/Space；toast 加 role=\"status\" aria-live=\"polite\"；导航 a 加 aria-current=\"page\"；Tab 栏图标 span 加 aria-hidden；<dialog> 加 aria-labelledby 指向标题 h2；未读 badge 加 aria-label。",
+    "file": "/Users/sara/Projects/parallel/src/components/TaskRow.tsx、/Users/sara/Projects/parallel/src/views/Board.tsx、/Users/sara/Projects/parallel/src/views/Week.tsx、/Users/sara/Projects/parallel/src/components/Stepper.tsx、/Users/sara/Projects/parallel/src/App.tsx、/Users/sara/Projects/parallel/src/components/Modal.tsx",
+    "severity": "medium"
+   },
+   {
+    "title": "手机端触控目标过小：checkbox 16px、btn.sm 约 22px 高、chip 约 24px",
+    "detail": ".cb 是 16×16 的 span，任务行里点击命中区仅此一格；.btn.sm padding 3px 8px；.chip padding 3px 11px。Apple/WCAG 建议 44px/24px。可执行：在 @media (max-width:640px) 或 (pointer:coarse) 下把 .cb 视觉保持 16px 但用 ::before 扩展到 32px 命中区（或直接把 .trow 第一列改 32px 并让 .cb 居中、padding 8px），.btn.sm 和 .chip 在 coarse pointer 下 min-height 32px。",
+    "file": "/Users/sara/Projects/parallel/src/styles.css（.cb、.btn.sm、.chip、.trow）",
+    "severity": "medium"
+   },
+   {
+    "title": "对话框没有 overflow-y:auto，手机横屏/键盘弹出时保存按钮会被裁掉",
+    "detail": "dialog 设了 max-height:90vh 但没设 overflow，TaskDialog 有 6 个字段 + 备注，iPhone 上弹出键盘后可视区不足，底部「保存」滚不出来。可执行：dialog{overflow-y:auto} 或 .dlg-body{max-height:90vh;overflow-y:auto}；同时 .acts 在 ≤640px 用 position:sticky;bottom:0 贴底。",
+    "file": "/Users/sara/Projects/parallel/src/styles.css（dialog、.dlg-body、.acts）",
+    "severity": "medium"
+   },
+   {
+    "title": "任务与提醒之间没有手动入口：ReminderDialog 支持 preset(task) 但没有任何地方调用",
+    "detail": "只有「指派给别人」时会自动生成带 task_id 的提醒；想就某个任务催一下对方，得去 Inbox 手打任务名。Inbox 里「关联任务：xxx」也只是文字，点不了。可执行：TaskDialog 编辑态加「提醒负责人」按钮，打开 ReminderDialog 并 preset {to: assignee_id, taskId, message: `关于「${title}」：`}；Inbox 的关联任务改成可点开 TaskDialog 或跳项目。",
+    "file": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（TaskDialog/ReminderDialog）、/Users/sara/Projects/parallel/src/views/Inbox.tsx",
+    "severity": "medium"
+   },
+   {
+    "title": "Garden 手机端体验差，且未响应「只看我的」筛选",
+    "detail": "SVG min-width:520px、viewBox 高 190，375px 屏上被缩放到约 0.72 倍后横向滚动，11px 的项目名与 10px 的阶段字变成 7-8px 不可读。Garden 收到的是全部 tasks，Today 切「只看我的」后花园的「今天完成 N 项」仍是两人合计。可执行：≤640px 时 W 改为 max(容器宽, n*90)，字号在窄屏用 13/12px 并允许项目名换行两行；Garden props 改为传 all（筛选后的任务）。另见需拍板问题：是否要做成 Forest 式每日累积。",
+    "file": "/Users/sara/Projects/parallel/src/components/Garden.tsx（W/H 计算、文字）、/Users/sara/Projects/parallel/src/views/Today.tsx（<Garden tasks={tasks}>）、/Users/sara/Projects/parallel/src/styles.css（.garden svg）",
+    "severity": "medium"
+   },
+   {
+    "title": "定时提醒（routines）表没有接入实时通道，另一人建的定时提醒要刷新才看见；也无法编辑只能删了重建",
+    "detail": "store 的 realtime 只订阅 projects/tasks/reminders/project_members/workspace_members，routines.sql 已把 routines 加进 publication 但客户端没监听；last_fired 更新也不会实时反映。Routines 列表只有暂停/删除，改时间或改星期得删掉重建，删除也没有 confirm。可执行：store 的表数组加 'routines' 并在 refetch 里处理；Routines 行加「编辑」把该行回填到上方表单（upsertRoutine 已支持带 id）。",
+    "file": "/Users/sara/Projects/parallel/src/state/store.tsx（realtime useEffect）、/Users/sara/Projects/parallel/src/components/Routines.tsx",
+    "severity": "medium"
+   },
+   {
+    "title": "Login 没有忘记密码/重置流程",
+    "detail": "Miranda 忘密码只能找 Sara 去 Supabase 后台重置。可执行：登录卡加「忘记密码」链接调用 supabase.auth.resetPasswordForEmail(email, { redirectTo: location.origin + base })，并在 App.tsx 监听 onAuthStateChange 的 PASSWORD_RECOVERY 事件显示一个「设置新密码」表单（supabase.auth.updateUser）。",
+    "file": "/Users/sara/Projects/parallel/src/views/Login.tsx、/Users/sara/Projects/parallel/src/App.tsx",
+    "severity": "medium"
+   },
+   {
+    "title": "成员视角信息不足：Miranda 看不到自己被分配了哪些项目，只读项目的「设置」对话框输入框可以打字但不能保存",
+    "detail": "Members 页对 member 只显示成员列表和我的资料，权限矩阵 owner 才有；她只能进每个项目看有没有「只读」标签。ProjectDialog 对不可编辑者没有 disable 输入框，只是隐藏保存按钮；PRD 分段在只读时「编辑」按钮仍高亮但渲染的是预览。可执行：Members 页对 member 显示「我可以编辑的项目」列表（projectMembers 过滤 user_id）；ProjectDialog 各 input 加 disabled={!editable}；ProjectDetail 不可编辑时把 seg 的「编辑」按钮隐藏或 disabled 并强制 mode='view'。",
+    "file": "/Users/sara/Projects/parallel/src/views/Members.tsx、/Users/sara/Projects/parallel/src/components/Dialogs.tsx（ProjectDialog）、/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx（seg）",
+    "severity": "low"
+   },
+   {
+    "title": "PRD 双人同时编辑会互相覆盖，无提示",
+    "detail": "ProjectDetail 的 useEffect 在 textarea 聚焦时忽略远端 prd 更新，800ms 后本地整段 upsert 覆盖服务器；两人同时改 PRD 时后保存者赢且没有任何提示。两人项目概率低但一旦发生丢失整段。可执行：上传时带 updated_at 做乐观锁（upsert 改为 update().eq('updated_at', 本地值)，失败则提示「对方刚改过，已刷新」并合并）；或至少在检测到远端 prd 变化且本地正在编辑时在 savehint 处显示黄字「对方正在编辑」。",
+    "file": "/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx（onPrd/useEffect）",
+    "severity": "low"
+   },
+   {
+    "title": "阶段编辑不能调整顺序；撤销邀请无确认；筛选状态不持久",
+    "detail": "StagesDialog 只能增删改，插入中间阶段要删掉后面重建。Members 页待注册 chip 点一下就撤销邀请，没有 confirm。Today「只看我的」和 Board「产品/运营」筛选是组件 state，切页即丢。可执行：StagesDialog 每行加 ↑↓ 按钮；撤销邀请加 confirm；两个筛选值写 localStorage（key parallel.today.mine / parallel.board.filter）。",
+    "file": "/Users/sara/Projects/parallel/src/components/Dialogs.tsx（StagesDialog）、/Users/sara/Projects/parallel/src/views/Members.tsx、/Users/sara/Projects/parallel/src/views/Today.tsx、/Users/sara/Projects/parallel/src/views/Board.tsx",
+    "severity": "low"
+   },
+   {
+    "title": "没有离线/断网状态提示，未知路由静默回落到 Today，切页不回顶",
+    "detail": "PWA 缓存了壳但数据请求失败时只在写操作 toast「保存失败」，读取失败列表为空看起来像没数据。location.hash 乱写时 App 渲染 Today 但导航无高亮。hash 切页浏览器不滚回顶部，手机上从很长的 Board 切到 Today 停在中间。可执行：监听 online/offline 事件在 .top 显示「离线」小标签；parse() 对未知 v 归一为 'today'；hashchange 里 window.scrollTo(0,0)。",
+    "file": "/Users/sara/Projects/parallel/src/App.tsx",
+    "severity": "low"
+   },
+   {
+    "title": "PWA 主题色固定浅色；manifest 未随深色模式变化；marked 输出未过滤 javascript: 链接",
+    "detail": "theme_color #F5F6F3 在深色模式 Android 状态栏是浅色块。renderMd 只转义了 <，Markdown 链接 [x](javascript:...) 会原样输出 href；两人可信环境风险极低，但加一行 marked 的 renderer.link 校验协议即可。",
+    "file": "/Users/sara/Projects/parallel/vite.config.ts、/Users/sara/Projects/parallel/index.html（meta theme-color 可加 media）、/Users/sara/Projects/parallel/src/views/ProjectDetail.tsx（renderMd）",
+    "severity": "low"
+   }
+  ],
+  "questions": [
+   "Miranda「每天看 SEO 和 SEM」这件事，产品上是用现在的定时提醒（收件箱一条消息）就够，还是要做成每天自动生成的可勾选任务（进入今天/今天完成/花园小花，形成记录）？两者数据模型不同，决定了 Routines 是否要能「生成任务」而不只是发消息。",
+   "SEO/SEM 的看板链接（Semrush、Google Ads、GA）放哪里？现在只能写在 PRD Markdown 里。要不要给项目加一个「链接/资料」字段区，让运营线项目首页直接可点？",
+   "提醒里的「希望 X 前处理」现在只是显示，不会到点再提醒。是保持「立即送达 + 备注期望时间」，还是改成到点才投递（后端已有 pg_cron，可以顺手做）？",
+   "Garden 走哪条路：保持现在「项目阶段进度插画」（一眼看项目健康度），还是 README 里说的 Forest/Flora 式「每天完成累积、连续天数、历史可回看」的成长花园？后者需要新增每日统计表，界面也要重做。",
+   "Week 在手机上的定位：接受「手机只看不拖，改日期走对话框」并加一个「移到…」快捷按钮，还是投入做触屏拖拽（Pointer Events 自实现，Board 一并受益）？",
+   "Miranda 能不能自己在运营线新建项目（例如 Local Service 下面拆子活动）？现在 README 和代码都是 owner 独占，而她是运营线的实际负责人。",
+   "已完成任务在看板保留多久？建议默认只显示最近 14 天，你定一个天数或者要「归档」按钮。",
+   "优先级只有「普通 / P0」，但 PRD 模板里写 P0/P1/P2。要对齐成三级，还是模板改掉？"
+  ]
+ }
+]
