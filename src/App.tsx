@@ -8,9 +8,11 @@ import { ProjectDetail } from './views/ProjectDetail';
 import { Members } from './views/Members';
 import { Inbox } from './views/Inbox';
 import { Week } from './views/Week';
+import { Clients } from './views/Clients';
+import { ClientDetail } from './views/ClientDetail';
 
 type Route = { v: string; id?: string };
-const parse = (): Route => { const h = location.hash.replace('#', '') || 'today'; return h.startsWith('p/') ? { v: 'project', id: h.slice(2) } : { v: h }; };
+const parse = (): Route => { const h = location.hash.replace('#', '') || 'today'; return h.startsWith('p/') ? { v: 'project', id: h.slice(2) } : h.startsWith('c/') ? { v: 'client', id: h.slice(2) } : { v: h }; };
 
 export function App() {
   const { ready, user, wsId, reminders, toastMsg, reload } = useStore();
@@ -25,8 +27,11 @@ export function App() {
   if (!user) return <Login />;
   if (!wsId) return <div className="center-screen"><p className="muted">正在准备你的工作区…</p><button className="btn" onClick={reload}>重试</button></div>;
   const unread = reminders.filter(r => r.to_user === user.id && !r.read).length;
-  const nav: [string, string, string][] = [['today', '今天', '☀'], ['week', '本周', '▦'], ['board', '看板', '☰'], ['projects', '项目', '◫'], ['inbox', '提醒', '◔'], ['members', '成员', '☺']];
-  const on = (v: string) => route.v === v || (route.v === 'project' && v === 'projects');
+  const nav: [string, string, string][] = [['today', '今天', '☀'], ['clients', '客户', '◎'], ['week', '本周', '▦'], ['board', '看板', '☰'], ['projects', '项目', '◫'], ['inbox', '提醒', '◔'], ['members', '成员', '☺']];
+  const mobileNav = nav.filter(([v]) => ['today', 'clients', 'board', 'inbox'].includes(v));
+  const moreNav = nav.filter(([v]) => ['week', 'projects', 'members'].includes(v));
+  const [more, setMore] = useState(false);
+  const on = (v: string) => route.v === v || (route.v === 'project' && v === 'projects') || (route.v === 'client' && v === 'clients');
   return (
     <>
       <div className="top">
@@ -36,9 +41,12 @@ export function App() {
         {installEvt && <button className="btn sm" onClick={async () => { await installEvt.prompt(); setInstallEvt(null); }}>安装应用</button>}
       </div>
       <main className="main">
-        {route.v === 'week' ? <Week /> : route.v === 'board' ? <Board /> : route.v === 'projects' ? <Projects /> : route.v === 'project' ? <ProjectDetail id={route.id!} /> : route.v === 'members' ? <Members /> : route.v === 'inbox' ? <Inbox /> : <Today />}
+        {route.v === 'clients' ? <Clients /> : route.v === 'client' ? <ClientDetail id={route.id!} /> : route.v === 'week' ? <Week /> : route.v === 'board' ? <Board /> : route.v === 'projects' ? <Projects /> : route.v === 'project' ? <ProjectDetail id={route.id!} /> : route.v === 'members' ? <Members /> : route.v === 'inbox' ? <Inbox /> : <Today />}
       </main>
-      <nav className="tabbar">{nav.map(([v, l, ic]) => <a key={v} href={'#' + v} className={on(v) ? 'on' : ''}><span className="ic">{ic}</span>{l}{v === 'inbox' && unread > 0 && <span className="badge">{unread}</span>}</a>)}</nav>
+      <nav className="tabbar">{mobileNav.map(([v, l, ic]) => <a key={v} href={'#' + v} className={on(v) ? 'on' : ''} onClick={() => setMore(false)}><span className="ic">{ic}</span>{l}{v === 'inbox' && unread > 0 && <span className="badge">{unread}</span>}</a>)}
+        <a href="#" className={moreNav.some(([v]) => on(v)) ? 'on' : ''} onClick={e => { e.preventDefault(); setMore(m => !m); }}><span className="ic">⋯</span>更多</a>
+        {more && <div className="more-sheet">{moreNav.map(([v, l, ic]) => <a key={v} href={'#' + v} onClick={() => setMore(false)}><span className="ic">{ic}</span>{l}</a>)}</div>}
+      </nav>
       <div className={`toast ${toastMsg ? 'on' : ''}`}>{toastMsg}</div>
     </>
   );

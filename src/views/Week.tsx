@@ -9,7 +9,7 @@ const WD = ['一', '二', '三', '四', '五', '六', '日'];
 const mondayOf = (s: string) => { const d = new Date(s + 'T00:00:00'); const off = (d.getDay() + 6) % 7; return addDays(s, -off); };
 
 export function Week() {
-  const { tasks, projects, upsertTask, canEditTask, memberName, toast } = useStore();
+  const { tasks, projects, patchTask, canEditTask, memberName, toast } = useStore();
   const [start, setStart] = useState(mondayOf(todayStr()));
   const [edit, setEdit] = useState<Partial<Task> | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function Week() {
   const drop = (id: string, due: string | null) => {
     const task = tasks.find(x => x.id === id); if (!task || task.due === due) return;
     if (!canEditTask(task)) { toast('你没有这个任务的权限'); return; }
-    upsertTask({ ...task, due });
+    patchTask(task.id, { due });
   };
   const Card = ({ x }: { x: Task }) => (
     <div className={`wcard ${x.status === 'done' ? 'done' : ''}`} draggable onDragStart={e => { e.dataTransfer.setData('text/plain', x.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => setEdit(x)}>

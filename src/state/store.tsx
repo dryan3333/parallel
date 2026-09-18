@@ -1,14 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
+import type { Client, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
 import { fmtDue } from '../lib/util';
 
 type State = {
   session: Session | null; user: User | null; ready: boolean;
   wsId: string | null; role: 'owner' | 'member' | null;
   members: Member[]; invitations: Invitation[];
-  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[];
+  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[]; clients: Client[];
 };
 type Actions = {
   reload: () => Promise<void>;
@@ -19,6 +19,11 @@ type Actions = {
   deleteProject: (id: string) => Promise<void>;
   upsertTask: (t: Partial<Task> & { title: string }) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<void>;
+  patchTask: (id: string, patch: Partial<Task>) => Promise<boolean>;
+  patchProject: (id: string, patch: Partial<Project>) => Promise<boolean>;
+  upsertClient: (c: Partial<Client> & { name: string }) => Promise<Client | null>;
+  patchClient: (id: string, patch: Partial<Client>) => Promise<boolean>;
+  deleteClient: (id: string) => Promise<void>;
   invite: (email: string) => Promise<string | null>;
   revokeInvite: (id: string) => Promise<void>;
   removeMember: (uid: string) => Promise<void>;
@@ -47,6 +52,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [toastMsg, setToastMsg] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
   const user = session?.user ?? null;
@@ -71,7 +77,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadAll = useCallback(async (ws: string) => {
-    const [mem, prof, inv, pr, ta, pm, re, ro] = await Promise.all([
+    const [mem, prof, inv, pr, ta, pm, re, ro, cl] = await Promise.all([
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', ws),
       supabase.from('profiles').select('id, display_name, email'),
       supabase.from('invitations').select('id, email, created_at').eq('workspace_id', ws),
@@ -80,6 +86,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.from('project_members').select('*'),
       supabase.from('reminders').select('*').eq('workspace_id', ws).order('created_at', { ascending: false }),
       supabase.from('routines').select('*').eq('workspace_id', ws).order('created_at'),
+      supabase.from('clients').select('*').eq('workspace_id', ws).order('created_at'),
     ]);
     const profs = new Map((prof.data || []).map(p => [p.id, p]));
     setMembers((mem.data || []).map(m => ({ user_id: m.user_id, role: m.role, display_name: profs.get(m.user_id)?.display_name || '', email: profs.get(m.user_id)?.email || '' })));
@@ -89,6 +96,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setProjectMembers((pm.data || []) as ProjectMember[]);
     setReminders((re.data || []) as Reminder[]);
     setRoutines((ro.data || []) as Routine[]);
+    setClients((cl.data || []) as Client[]);
   }, []);
 
   const reload = useCallback(async () => { const ws = await loadMembership(); if (ws) await loadAll(ws); }, [loadMembership, loadAll]);
@@ -104,16 +112,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       else if (table === 'tasks') { const { data } = await supabase.from('tasks').select('*').eq('workspace_id', wsId).order('created_at'); setTasks((data || []) as Task[]); }
       else if (table === 'reminders') { const { data } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setReminders((data || []) as Reminder[]); }
       else if (table === 'project_members') { const { data } = await supabase.from('project_members').select('*'); setProjectMembers((data || []) as ProjectMember[]); }
+      else if (table === 'clients') { const { data } = await supabase.from('clients').select('*').eq('workspace_id', wsId).order('created_at'); setClients((data || []) as Client[]); }
+      else if (table === 'routines') { const { data } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); setRoutines((data || []) as Routine[]); }
       else await loadAll(wsId);
     };
-    for (const t of ['projects', 'tasks', 'reminders', 'project_members', 'workspace_members']) {
-      const filter = t === 'project_members' ? undefined : `workspace_id=eq.${wsId}`;
-      ch.on('postgres_changes', { event: '*', schema: 'public', table: t, ...(filter ? { filter } : {}) }, (payload) => {
+    for (const t of ['projects', 'tasks', 'reminders', 'project_members', 'workspace_members', 'clients', 'routines']) {
+      ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, (payload) => {
         refetch(t)();
         if (t === 'reminders' && payload.eventType === 'INSERT') {
           const r = payload.new as Reminder;
           if (r.to_user === user.id && 'Notification' in window && Notification.permission === 'granted') {
-            try { new Notification('平行线提醒', { body: r.message }); } catch { /* ignore */ }
+            const show = async () => {
+              try { const reg = await navigator.serviceWorker?.getRegistration(); if (reg) { await reg.showNotification('平行线提醒', { body: r.message }); return; } } catch { /* fall through */ }
+              try { new Notification('平行线提醒', { body: r.message }); } catch { /* ignore */ }
+            };
+            show();
           }
         }
       });
@@ -125,8 +138,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const isOwner = role === 'owner';
   const canEdit = useCallback((projectId: string | null) => {
     if (!user) return false; if (isOwner) return true; if (!projectId) return true;
+    if (projects.find(p => p.id === projectId)?.created_by === user.id) return true;
     return projectMembers.some(pm => pm.project_id === projectId && pm.user_id === user.id && pm.can_edit);
-  }, [user, isOwner, projectMembers]);
+  }, [user, isOwner, projectMembers, projects]);
   const canEditTask = useCallback((t: Task) => {
     if (!user) return false; if (isOwner || t.assignee_id === user.id) return true;
     if (!t.project_id) return t.created_by === user.id;
@@ -170,6 +184,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (error) { toast('删除失败：' + error.message); return; }
     setTasks(ts => ts.filter(t => t.id !== id));
   };
+  const patchTask: Actions['patchTask'] = async (id, patch) => {
+    setTasks(ts => ts.map(t => t.id === id ? { ...t, ...patch } : t));
+    const { error } = await supabase.from('tasks').update(patch).eq('id', id);
+    if (error) { toast('保存失败：' + error.message); return false; } return true;
+  };
+  const patchProject: Actions['patchProject'] = async (id, patch) => {
+    setProjects(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
+    const { error } = await supabase.from('projects').update(patch).eq('id', id);
+    if (error) { toast('保存失败：' + error.message); return false; } return true;
+  };
+  const upsertClient: Actions['upsertClient'] = async (c) => {
+    if (!wsId || !user) return null;
+    const row = { ...c, workspace_id: wsId, created_by: c.created_by || user.id };
+    const { data, error } = await supabase.from('clients').upsert(row).select().single();
+    if (error) { toast('保存失败：' + error.message); return null; }
+    setClients(cs => { const i = cs.findIndex(x => x.id === data.id); if (i < 0) return [...cs, data as Client]; const n = cs.slice(); n[i] = data as Client; return n; });
+    return data as Client;
+  };
+  const patchClient: Actions['patchClient'] = async (id, patch) => {
+    setClients(cs => cs.map(c => c.id === id ? { ...c, ...patch } : c));
+    const { error } = await supabase.from('clients').update(patch).eq('id', id);
+    if (error) { toast('保存失败：' + error.message); return false; } return true;
+  };
+  const deleteClient: Actions['deleteClient'] = async (id) => {
+    const { error } = await supabase.from('clients').delete().eq('id', id);
+    if (error) { toast('删除失败：' + error.message); return; }
+    setClients(cs => cs.filter(c => c.id !== id));
+  };
   const invite: Actions['invite'] = async (email) => {
     if (!wsId || !user) return '未登录';
     const { error } = await supabase.from('invitations').insert({ workspace_id: wsId, email: email.trim().toLowerCase(), invited_by: user.id });
@@ -210,9 +252,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateName: Actions['updateName'] = async (name) => { if (!user) return; await supabase.from('profiles').update({ display_name: name }).eq('id', user.id); if (wsId) await loadAll(wsId); };
 
   const value = useMemo<State & Actions>(() => ({
-    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines,
-    reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, invite, revokeInvite, removeMember,
+    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients,
+    reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, patchTask, patchProject, upsertClient, patchClient, deleteClient, invite, revokeInvite, removeMember,
     setProjectMember, sendReminder, markRead, deleteReminder, upsertRoutine, deleteRoutine, updateName, toast, toastMsg,
-  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
+  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

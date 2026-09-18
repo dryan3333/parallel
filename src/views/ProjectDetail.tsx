@@ -12,7 +12,7 @@ function renderMd(src: string) {
 }
 
 export function ProjectDetail({ id }: { id: string }) {
-  const { projects, tasks, members, projectMembers, role, canEdit, upsertProject, upsertTask, setProjectMember, memberName, toast, user } = useStore();
+  const { projects, tasks, members, projectMembers, role, canEdit, patchProject, upsertTask, setProjectMember, memberName, toast, user, clients } = useStore();
   const p = projects.find(x => x.id === id);
   const [mode, setMode] = useState<'edit' | 'view'>('edit');
   const [edit, setEdit] = useState<Partial<Task> | null>(null);
@@ -29,26 +29,26 @@ export function ProjectDetail({ id }: { id: string }) {
   const s = curStage(p);
   const onPrd = (v: string) => {
     setPrd(v); setHint('输入中…'); window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(async () => { lastSaved.current = v; const r = await upsertProject({ ...p, prd: v }); setHint(r ? '已保存 ' + new Date().toTimeString().slice(0, 5) : '保存失败'); }, 800);
+    timer.current = window.setTimeout(async () => { lastSaved.current = v; const ok = await patchProject(p.id, { prd: v }); setHint(ok ? '已保存 ' + new Date().toTimeString().slice(0, 5) : '保存失败'); }, 800);
   };
   const toggleStage = (i: number) => {
     if (!editable) { toast('你没有这个项目的编辑权限'); return; }
     const st = p.stages.map(x => ({ ...x })); const nowDone = !st[i].done; st[i].done = nowDone;
     if (nowDone) for (let k = 0; k < i; k++) st[k].done = true; else for (let k = i + 1; k < st.length; k++) st[k].done = false;
-    upsertProject({ ...p, stages: st });
+    patchProject(p.id, { stages: st });
   };
-  const setStageDue = (i: number, v: string) => { const st = p.stages.map(x => ({ ...x })); st[i].due = v; upsertProject({ ...p, stages: st }); };
+  const setStageDue = (i: number, v: string) => { const st = p.stages.map(x => ({ ...x })); st[i].due = v; patchProject(p.id, { stages: st }); };
   const addTask = async (e: React.FormEvent) => {
     e.preventDefault(); if (!title.trim()) return;
     const r = await upsertTask({ title: title.trim(), project_id: id, due: due || null, status: 'todo', priority: 'normal', note: '', assignee_id: user?.id || null });
     if (r) { setTitle(''); setDue(''); toast('已添加'); }
   };
-  const rename = (e: React.FocusEvent<HTMLHeadingElement>) => { const n = e.currentTarget.textContent?.trim() || ''; if (n && n !== p.name && editable) { upsertProject({ ...p, name: n }); toast('已重命名'); } else e.currentTarget.textContent = p.name; };
+  const rename = (e: React.FocusEvent<HTMLHeadingElement>) => { const n = e.currentTarget.textContent?.trim() || ''; if (n && n !== p.name && editable) { patchProject(p.id, { name: n }); toast('已重命名'); } else e.currentTarget.textContent = p.name; };
   const others = members.filter(m => m.role !== 'owner');
   return (
     <>
       <div className="ph">
-        <div className="row"><a href="#projects" className="btn sm ghost">← 项目</a><span className={`tag ${p.type}`}>{TYPES[p.type]}线</span>
+        <div className="row"><a href="#projects" className="btn sm ghost">← 项目</a><span className={`tag ${p.type}`}>{TYPES[p.type]}线</span>{p.client_id && clients.find(c => c.id === p.client_id) && <a href={`#c/${p.client_id}`} className="nolink"><span className="tag ops">{clients.find(c => c.id === p.client_id)!.name}</span></a>}
           {s ? <span className="muted small">当前阶段 <b className="ink">{s.name}</b>{s.due ? ' · ' + fmtDue(s.due) + ' 截止' : ''}</span> : <span className="ok small">全部阶段完成</span>}
           {!editable && <span className="tag who">只读</span>}
           <span className="spacer" />

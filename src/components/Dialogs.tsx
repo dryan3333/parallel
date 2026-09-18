@@ -66,17 +66,18 @@ export function TaskDialog({ task, onClose }: { task: Partial<Task> | null; onCl
 
 /* ---------- 项目 ---------- */
 export function ProjectDialog({ project, onClose }: { project: Partial<Project> | null; onClose: () => void }) {
-  const { role, upsertProject, deleteProject, toast, canEdit } = useStore();
+  const { role, upsertProject, deleteProject, toast, canEdit, clients } = useStore();
   const [f, setF] = useState<Partial<Project>>({});
   useEffect(() => { if (project) setF({ goal: '', type: 'product', ...project }); }, [project]);
   if (!project) return null;
   const isNew = !project.id;
   const isOwner = role === 'owner';
-  const editable = isNew ? isOwner : canEdit(project.id || null);
+  const editable = isNew ? (isOwner || (f.type || 'product') === 'ops') : canEdit(project.id || null);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = (f.name || '').trim(); if (!name) return;
     const type = (f.type || 'product') as ProjectType;
+    if (isNew && !isOwner && type !== 'ops') { toast('产品线项目只有最高权限可以新建'); return; }
     const obj: Partial<Project> & { name: string; type: ProjectType } = { ...f, name, type, goal: (f.goal || '').trim() };
     if (isNew) { obj.stages = defaultStages(type); obj.prd = PRD_TPL[type].replace('{name}', name); obj.archived = false; }
     const r = await upsertProject(obj);
@@ -90,8 +91,14 @@ export function ProjectDialog({ project, onClose }: { project: Partial<Project> 
           <select value={f.type || 'product'} onChange={e => setF(x => ({ ...x, type: e.target.value as ProjectType }))} disabled={!isNew}>
             {(Object.keys(TYPES) as ProjectType[]).map(k => <option key={k} value={k}>{TYPES[k]}线</option>)}
           </select></div>
+        {(f.type || 'product') === 'ops' && <div className="f"><label>所属客户</label>
+          <select value={f.client_id || ''} onChange={e => setF(x => ({ ...x, client_id: e.target.value || null }))}>
+            <option value="">不挂客户（内部运营线）</option>
+            {clients.filter(c => !c.archived).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select></div>}
         <div className="f"><label>一句话目标</label><input type="text" value={f.goal || ''} onChange={e => setF(x => ({ ...x, goal: e.target.value }))} placeholder="这个项目做成了是什么样" /></div>
         {isNew && <p className="hint">会按类型自动生成阶段和 PRD 模板，之后都能改。</p>}
+        {isNew && !isOwner && (f.type || 'product') !== 'ops' && <p className="hint warn">产品线项目只有最高权限可以新建，你可以新建运营线 campaign。</p>}
         {!isNew && !isOwner && <p className="hint">只有最高权限可以归档或删除项目。</p>}
         <div className="acts">
           {!isNew && isOwner && <>

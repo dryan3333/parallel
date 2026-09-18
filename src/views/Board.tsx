@@ -8,7 +8,7 @@ import { TaskDialog } from '../components/Dialogs';
 const COLS: [Status, string][] = [['todo', '待办'], ['doing', '进行中'], ['done', '完成']];
 
 export function Board() {
-  const { projects, tasks, upsertTask, canEditTask, memberName, toast } = useStore();
+  const { projects, tasks, patchTask, canEditTask, memberName, toast } = useStore();
   const [filter, setFilter] = useState<'all' | 'product' | 'ops'>('all');
   const [edit, setEdit] = useState<Partial<Task> | null>(null);
   const [over, setOver] = useState<Status | null>(null);
@@ -16,7 +16,7 @@ export function Board() {
   const move = (t: Task, to: Status) => {
     if (t.status === to) return;
     if (!canEditTask(t)) { toast('你没有这个任务的权限'); return; }
-    upsertTask({ ...t, status: to, done_at: to === 'done' ? todayStr() : null });
+    patchTask(t.id, { status: to, done_at: to === 'done' ? todayStr() : null });
   };
   return (
     <>

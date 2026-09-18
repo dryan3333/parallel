@@ -76,3 +76,15 @@ export const fmtTime = (iso: string) => { const d = new Date(iso); return `${d.g
 export const curStage = (p: Project): Stage | undefined => (p.stages || []).find(s => !s.done);
 export const nextUndoneIdx = (p: Project) => (p.stages || []).findIndex(s => !s.done);
 export const defaultStages = (type: ProjectType): Stage[] => STAGE_TPL[type].map(name => ({ name, due: '', done: false }));
+
+export const CHANNELS: [string, string][] = [['SEO', 'SEO'], ['SEM', 'SEM'], ['XHS', '小红书'], ['SOCIAL', '社媒'], ['WEB', '建站'], ['BRAND_AU', '品牌出海'], ['LOCAL', '本地服务']];
+export const CHANNEL_LABEL = (k: string) => CHANNELS.find(c => c[0] === k)?.[1] || k;
+export const STAGES_CLIENT: [string, string][] = [['active', '在营'], ['lead', '线索'], ['paused', '暂停'], ['churned', '流失']];
+export const STAGE_LABEL = (k: string) => STAGES_CLIENT.find(c => c[0] === k)?.[1] || k;
+export const LINK_PRESETS = ['官网', 'Google Analytics', 'Search Console', 'Google Ads', 'Semrush', '小红书', '飞书/Drive 文件夹'];
+export const lastLogDate = (log: string): string | null => { const m = log.match(/^## (\d{4}-\d{2}-\d{2})/m); return m ? m[1] : null; };
+export const appendLog = (log: string, text: string): string => {
+  const t = todayStr(); const head = `## ${t}`;
+  if (log.startsWith(head)) { const i = log.indexOf('\n'); const rest = i < 0 ? '' : log.slice(i); return `${head}\n- ${text}${rest}`; }
+  return `${head}\n- ${text}\n\n${log}`.trimEnd() + '\n';
+};

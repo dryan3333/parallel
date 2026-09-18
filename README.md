@@ -14,7 +14,7 @@
 ### 1. Supabase
 
 1. 到 https://supabase.com 用 GitHub 账号登录，New project，区域选 Sydney。
-2. 左侧 SQL Editor，新建 query，把 `supabase/schema.sql` 整个贴进去，Run。
+2. 左侧 SQL Editor，新建 query，依次执行 `supabase/schema.sql`、`supabase/routines.sql`、`supabase/migrations/` 下的每个文件（按文件名日期顺序）。
 3. 左侧 Authentication → Providers → Email：保持 Email 打开。想跳过邮箱验证就把 **Confirm email** 关掉（两个人用没必要验证）。
 4. 左侧 Project Settings → API，记下 **Project URL** 和 **anon public** key。
 
@@ -52,7 +52,8 @@ npm run dev
 | 角色 | 能做什么 |
 |---|---|
 | owner（最高权限） | 一切：建/删/归档项目，邀请和移除成员，分配项目权限 |
-| member 被分配到某项目 | 修改该项目的 PRD、阶段、任务 |
+| member 被分配到某项目，或自己创建的项目 | 修改该项目的 PRD、阶段、任务 |
+| member | 可新建运营线 campaign（产品线仍只有 owner 能建）；客户档案、客户日志与备注对所有成员可写，删除客户仅 owner |
 | member 未分配 | 只读；可以创建不关联项目的个人任务；可以给任何人发提醒 |
 | 任务负责人 | 无论项目权限如何，都能改自己被指派的任务状态 |
 
