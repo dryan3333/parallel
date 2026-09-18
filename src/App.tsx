@@ -17,6 +17,7 @@ const parse = (): Route => { const h = location.hash.replace('#', '') || 'today'
 export function App() {
   const { ready, user, wsId, reminders, toastMsg, reload } = useStore();
   const [route, setRoute] = useState<Route>(parse());
+  const [more, setMore] = useState(false);
   const [installEvt, setInstallEvt] = useState<(Event & { prompt: () => Promise<void> }) | null>(null);
   useEffect(() => {
     const f = (e: Event) => { e.preventDefault(); setInstallEvt(e as Event & { prompt: () => Promise<void> }); };
@@ -30,7 +31,6 @@ export function App() {
   const nav: [string, string, string][] = [['today', '今天', '☀'], ['clients', '客户', '◎'], ['week', '本周', '▦'], ['board', '看板', '☰'], ['projects', '项目', '◫'], ['inbox', '提醒', '◔'], ['members', '成员', '☺']];
   const mobileNav = nav.filter(([v]) => ['today', 'clients', 'board', 'inbox'].includes(v));
   const moreNav = nav.filter(([v]) => ['week', 'projects', 'members'].includes(v));
-  const [more, setMore] = useState(false);
   const on = (v: string) => route.v === v || (route.v === 'project' && v === 'projects') || (route.v === 'client' && v === 'clients');
   return (
     <>
