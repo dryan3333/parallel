@@ -266,3 +266,25 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .update-bar button{border:0;background:var(--bg);color:var(--ink);border-radius:999px;padding:3px 10px;cursor:pointer}
 .more-sheet{position:absolute;right:8px;bottom:calc(64px + env(safe-area-inset-bottom));background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;display:flex;flex-direction:column;min-width:140px}
 .more-sheet a{flex-direction:row!important;gap:10px!important;padding:9px 12px;font-size:14px!important;min-width:0!important;align-items:center!important}
+
+/* today v2 */
+.quick2{display:flex;gap:8px;align-items:center;margin:4px 0 22px;background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:6px 6px 6px 12px}
+.quick2 input[type=text]{border:0;padding:6px 0;background:transparent;flex:1;min-width:0}
+.quick2 input[type=text]:focus-visible{outline:none}
+.quick2:focus-within{border-color:var(--ink)}
+.quick-hint{color:var(--muted);font-size:12px;white-space:nowrap}
+@media (max-width:640px){.quick-hint{display:none}}
+.section h2.clickable{cursor:pointer;user-select:none}
+.trow{grid-template-columns:22px 1fr auto auto}
+.trow .qa{display:none;gap:2px}
+.trow:hover .qa,.trow:focus-within .qa{display:flex}
+@media (hover:none){.trow .qa{display:flex}.trow .qa .btn:not(:last-child){display:none}}
+@media (max-width:640px){.trow{grid-template-columns:22px 1fr auto}.trow .m{grid-column:2;justify-content:flex-start}.trow .qa{grid-column:3;grid-row:1}}
+.trow.doing{border-left:3px solid var(--product)}
+.tag.doing{background:var(--product-soft);color:var(--product);margin-left:6px}
+.rlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.rcard{background:var(--warn-soft);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.rcard.read{background:var(--surface)}
+.rcard .dot{width:8px;height:8px;border-radius:50%;background:var(--danger);margin-left:auto}
+.rcard .rmsg{white-space:pre-wrap;font-size:14.5px}
+.rcard .racts{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}

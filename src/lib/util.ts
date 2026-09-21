@@ -88,3 +88,29 @@ export const appendLog = (log: string, text: string): string => {
   if (log.startsWith(head)) { const i = log.indexOf('\n'); const rest = i < 0 ? '' : log.slice(i); return `${head}\n- ${text}${rest}`; }
   return `${head}\n- ${text}\n\n${log}`.trimEnd() + '\n';
 };
+
+/* Todoist 式快速添加解析：「明天 给客户发周报 !」「周五 #SE Lab 写 PRD」「@Made by Cow 看 SEM」 */
+export function parseQuick(raw: string, projects: { id: string; name: string }[], clients: { id: string; name: string }[]) {
+  let text = ' ' + raw.trim() + ' ';
+  let due: string | null = todayStr(); let priority: 'normal' | 'high' = 'normal';
+  let project_id: string | null = null; let client_id: string | null = null;
+  const t = todayStr(); const dow = new Date(t + 'T00:00:00').getDay();
+  const rel: [RegExp, () => string | null][] = [
+    [/\s(今天|今日)\s/, () => t], [/\s明天\s/, () => addDays(t, 1)], [/\s后天\s/, () => addDays(t, 2)],
+    [/\s(下周|下星期)\s/, () => addDays(t, ((8 - dow) % 7) || 7)],
+    [/\s(无日期|不限|待定)\s/, () => null],
+  ];
+  for (const [re, f] of rel) { if (re.test(text)) { due = f(); text = text.replace(re, ' '); break; } }
+  const wd = text.match(/\s(下?)(周|星期)([一二三四五六日天])\s/);
+  if (wd) { const n = '日一二三四五六'.indexOf(wd[3] === '天' ? '日' : wd[3]); let diff = (n - dow + 7) % 7; if (diff === 0) diff = 7; if (wd[1]) diff += 7; due = addDays(t, diff); text = text.replace(wd[0], ' '); }
+  const md = text.match(/\s(\d{1,2})[\/月](\d{1,2})日?\s/);
+  if (md) { const y = t.slice(0, 4); due = `${y}-${md[1].padStart(2, '0')}-${md[2].padStart(2, '0')}`; text = text.replace(md[0], ' '); }
+  if (/[!！]/.test(text)) { priority = 'high'; text = text.replace(/[!！]+/g, ' '); }
+  const pick = (prefix: string, list: { id: string; name: string }[]) => {
+    const m = text.match(new RegExp(`\\s${prefix}([^\\s#@]+)`)); if (!m) return null;
+    const q = m[1].toLowerCase(); const hit = list.find(x => x.name.toLowerCase().startsWith(q)) || list.find(x => x.name.toLowerCase().includes(q));
+    if (hit) text = text.replace(m[0], ' '); return hit?.id || null;
+  };
+  project_id = pick('#', projects); client_id = pick('@', clients);
+  return { title: text.replace(/\s+/g, ' ').trim(), due, priority, project_id, client_id };
+}
