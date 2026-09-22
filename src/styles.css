@@ -288,3 +288,27 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .rcard .dot{width:8px;height:8px;border-radius:50%;background:var(--danger);margin-left:auto}
 .rcard .rmsg{white-space:pre-wrap;font-size:14.5px}
 .rcard .racts{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+.card.sel{outline:2px solid var(--product);outline-offset:-1px}
+@media (max-width:900px){.kbd-hint{display:none}}
+
+/* client crm layout */
+.crm{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:860px){.crm{grid-template-columns:1fr}}
+.crm-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:64px}
+@media (max-width:860px){.crm-side{position:static}}
+.crm-facts{display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.crm-facts>div{display:grid;grid-template-columns:52px 1fr;gap:8px;align-items:start}
+.crm-facts .lbl{color:var(--muted);font-size:12px;padding-top:2px}
+.composer{display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:6px;margin-bottom:18px}
+.composer input[type=text]{border:0;background:transparent;flex:1;min-width:0}
+.composer input[type=text]:focus-visible{outline:none}
+.composer:focus-within{border-color:var(--ink)}
+.timeline{display:flex;flex-direction:column;gap:14px}
+.tl-day{display:grid;grid-template-columns:64px 1fr;gap:12px}
+.tl-date{color:var(--muted);font-size:12px;padding-top:9px;text-align:right}
+.tl-items{border-left:2px solid var(--line);padding-left:14px;display:flex;flex-direction:column;gap:4px}
+.tl-item{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13.5px}
+.tl-item i{position:absolute;left:-21px;top:13px;width:8px;height:8px;border-radius:50%;background:var(--line-strong)}
+.tl-item.log i{background:var(--ops)}.tl-item.done i{background:var(--ok)}.tl-item.task i{background:var(--product)}
+.tl-item .clickable{cursor:pointer}
+@media (max-width:640px){.tl-day{grid-template-columns:1fr}.tl-date{text-align:left;padding:0 0 2px}}
