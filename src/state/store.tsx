@@ -74,8 +74,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const loadMembership = useCallback(async () => {
     if (!user) { setWsId(null); setRole(null); return null; }
-    const { data } = await supabase.from('workspace_members').select('workspace_id, role').eq('user_id', user.id).order('created_at').limit(1);
-    const m = data?.[0];
+    const { data } = await supabase.from('workspace_members').select('workspace_id, role, created_at').eq('user_id', user.id).order('created_at');
+    // 被邀请加入的团队工作区优先于注册时自动生成的个人工作区
+    const m = (data || []).find(x => x.role === 'member') || data?.[0];
     if (!m) { setWsId(null); setRole(null); return null; }
     setWsId(m.workspace_id); setRole(m.role); return m.workspace_id as string;
   }, [user]);
