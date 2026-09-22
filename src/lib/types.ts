@@ -31,3 +31,9 @@ export type Client = {
   contacts: ClientContact[]; links: ClientLink[]; note: string; log: string; owner_id: string | null; archived: boolean;
   created_by: string; created_at: string; updated_at: string;
 };
+export type FileCategory = 'contract' | 'brief' | 'asset' | 'deliverable' | 'report' | 'other';
+export type FileRow = {
+  id: string; workspace_id: string; kind: 'upload' | 'link'; name: string; path: string | null; url: string | null;
+  mime: string; size: number; category: FileCategory; client_id: string | null; project_id: string | null; task_id: string | null;
+  note: string; uploaded_by: string; created_at: string;
+};

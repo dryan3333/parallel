@@ -114,3 +114,8 @@ export function parseQuick(raw: string, projects: { id: string; name: string }[]
   project_id = pick('#', projects); client_id = pick('@', clients);
   return { title: text.replace(/\s+/g, ' ').trim(), due, priority, project_id, client_id };
 }
+
+export const FILE_CATEGORIES: [string, string][] = [['contract', '合同报价'], ['brief', 'Brief'], ['asset', '素材'], ['deliverable', '交付物'], ['report', '报告数据'], ['other', '其他']];
+export const CAT_LABEL = (k: string) => FILE_CATEGORIES.find(c => c[0] === k)?.[1] || k;
+export const fmtSize = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+export const safeName = (s: string) => s.replace(/[^\w.\-一-龥]+/g, '_').slice(0, 80);

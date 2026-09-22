@@ -1,14 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import type { Client, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
+import type { Client, FileRow, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
 import { fmtDue } from '../lib/util';
 
 type State = {
   session: Session | null; user: User | null; ready: boolean;
   wsId: string | null; role: 'owner' | 'member' | null;
   members: Member[]; invitations: Invitation[];
-  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[]; clients: Client[];
+  projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[]; clients: Client[]; files: FileRow[];
 };
 type Actions = {
   reload: () => Promise<void>;
@@ -24,6 +24,9 @@ type Actions = {
   upsertClient: (c: Partial<Client> & { name: string }) => Promise<Client | null>;
   patchClient: (id: string, patch: Partial<Client>) => Promise<boolean>;
   deleteClient: (id: string) => Promise<void>;
+  addFile: (f: Partial<FileRow> & { name: string }) => Promise<FileRow | null>;
+  patchFile: (id: string, patch: Partial<FileRow>) => Promise<boolean>;
+  removeFile: (id: string) => Promise<void>;
   invite: (email: string) => Promise<string | null>;
   revokeInvite: (id: string) => Promise<void>;
   removeMember: (uid: string) => Promise<void>;
@@ -53,6 +56,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [files, setFiles] = useState<FileRow[]>([]);
   const [toastMsg, setToastMsg] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
   const user = session?.user ?? null;
@@ -77,7 +81,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const loadAll = useCallback(async (ws: string) => {
-    const [mem, prof, inv, pr, ta, pm, re, ro, cl] = await Promise.all([
+    const [mem, prof, inv, pr, ta, pm, re, ro, cl, fi] = await Promise.all([
       supabase.from('workspace_members').select('user_id, role').eq('workspace_id', ws),
       supabase.from('profiles').select('id, display_name, email'),
       supabase.from('invitations').select('id, email, created_at').eq('workspace_id', ws),
@@ -87,6 +91,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.from('reminders').select('*').eq('workspace_id', ws).order('created_at', { ascending: false }),
       supabase.from('routines').select('*').eq('workspace_id', ws).order('created_at'),
       supabase.from('clients').select('*').eq('workspace_id', ws).order('created_at'),
+      supabase.from('files').select('*').eq('workspace_id', ws).order('created_at', { ascending: false }),
     ]);
     const profs = new Map((prof.data || []).map(p => [p.id, p]));
     setMembers((mem.data || []).map(m => ({ user_id: m.user_id, role: m.role, display_name: profs.get(m.user_id)?.display_name || '', email: profs.get(m.user_id)?.email || '' })));
@@ -97,6 +102,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setReminders((re.data || []) as Reminder[]);
     setRoutines((ro.data || []) as Routine[]);
     setClients((cl.data || []) as Client[]);
+    setFiles((fi.data || []) as FileRow[]);
   }, []);
 
   const reload = useCallback(async () => { const ws = await loadMembership(); if (ws) await loadAll(ws); }, [loadMembership, loadAll]);
@@ -113,10 +119,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       else if (table === 'reminders') { const { data } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setReminders((data || []) as Reminder[]); }
       else if (table === 'project_members') { const { data } = await supabase.from('project_members').select('*'); setProjectMembers((data || []) as ProjectMember[]); }
       else if (table === 'clients') { const { data } = await supabase.from('clients').select('*').eq('workspace_id', wsId).order('created_at'); setClients((data || []) as Client[]); }
+      else if (table === 'files') { const { data } = await supabase.from('files').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setFiles((data || []) as FileRow[]); }
       else if (table === 'routines') { const { data } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); setRoutines((data || []) as Routine[]); }
       else await loadAll(wsId);
     };
-    for (const t of ['projects', 'tasks', 'reminders', 'project_members', 'workspace_members', 'clients', 'routines']) {
+    for (const t of ['projects', 'tasks', 'reminders', 'project_members', 'workspace_members', 'clients', 'routines', 'files']) {
       ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, (payload) => {
         refetch(t)();
         if (t === 'reminders' && payload.eventType === 'INSERT') {
@@ -212,6 +219,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (error) { toast('删除失败：' + error.message); return; }
     setClients(cs => cs.filter(c => c.id !== id));
   };
+  const addFile: Actions['addFile'] = async (f) => {
+    if (!wsId || !user) return null;
+    const { data, error } = await supabase.from('files').insert({ ...f, workspace_id: wsId, uploaded_by: user.id }).select().single();
+    if (error) { toast('保存失败：' + error.message); return null; }
+    setFiles(fs => [data as FileRow, ...fs.filter(x => x.id !== data.id)]); return data as FileRow;
+  };
+  const patchFile: Actions['patchFile'] = async (id, patch) => {
+    setFiles(fs => fs.map(f => f.id === id ? { ...f, ...patch } : f));
+    const { error } = await supabase.from('files').update(patch).eq('id', id);
+    if (error) { toast('保存失败：' + error.message); return false; } return true;
+  };
+  const removeFile: Actions['removeFile'] = async (id) => {
+    const { error } = await supabase.from('files').delete().eq('id', id);
+    if (error) { toast('删除失败：' + error.message); return; }
+    setFiles(fs => fs.filter(f => f.id !== id));
+  };
   const invite: Actions['invite'] = async (email) => {
     if (!wsId || !user) return '未登录';
     const { error } = await supabase.from('invitations').insert({ workspace_id: wsId, email: email.trim().toLowerCase(), invited_by: user.id });
@@ -252,9 +275,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateName: Actions['updateName'] = async (name) => { if (!user) return; await supabase.from('profiles').update({ display_name: name }).eq('id', user.id); if (wsId) await loadAll(wsId); };
 
   const value = useMemo<State & Actions>(() => ({
-    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients,
-    reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, patchTask, patchProject, upsertClient, patchClient, deleteClient, invite, revokeInvite, removeMember,
+    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files,
+    reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, patchTask, patchProject, upsertClient, patchClient, deleteClient, addFile, patchFile, removeFile, invite, revokeInvite, removeMember,
     setProjectMember, sendReminder, markRead, deleteReminder, upsertRoutine, deleteRoutine, updateName, toast, toastMsg,
-  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
+  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

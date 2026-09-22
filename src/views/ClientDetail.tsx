@@ -6,6 +6,7 @@ import { Stepper } from '../components/Stepper';
 import { TaskRow } from '../components/TaskRow';
 import { ClientDialog } from '../components/ClientDialog';
 import { ProjectDialog, TaskDialog } from '../components/Dialogs';
+import { FilesPanel } from '../components/FilesPanel';
 
 type Item = { key: string; date: string; time?: string; kind: 'log' | 'task' | 'done' | 'campaign'; text: string; task?: Task; href?: string };
 
@@ -80,6 +81,7 @@ export function ClientDetail({ id }: { id: string }) {
           </form>
           {open.length > 0 && <div className="section"><h2 className="clickable" onClick={() => setShowOpen(s => !s)}>{showOpen ? '▾' : '▸'} 待办<span className="n">{open.length}</span></h2>
             {showOpen && <div className="tlist">{open.map(x => <TaskRow key={x.id} t={x} onEdit={setEdit} />)}</div>}</div>}
+          <div className="section"><h2>文件</h2><FilesPanel scope={{ clientId: id }} /></div>
           <div className="section"><h2>时间线<span className="n">{timeline.length}</span></h2>
             {groups.length ? <div className="timeline">{groups.map(([d, items]) => (
               <div key={d} className="tl-day"><div className="tl-date mono">{dayLabel(d)}</div>

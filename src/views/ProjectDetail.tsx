@@ -6,6 +6,7 @@ import { TYPES, curStage, fmtDue } from '../lib/util';
 import { Stepper } from '../components/Stepper';
 import { TaskRow } from '../components/TaskRow';
 import { ProjectDialog, StagesDialog, TaskDialog } from '../components/Dialogs';
+import { FilesPanel } from '../components/FilesPanel';
 
 function renderMd(src: string) {
   try { return marked.parse(String(src || '').replace(/</g, '&lt;'), { breaks: true, gfm: true, async: false }) as string; } catch { return `<pre>${src}</pre>`; }
@@ -72,6 +73,7 @@ export function ProjectDetail({ id }: { id: string }) {
             {list.length ? <div className="tlist flat">{list.map(x => <TaskRow key={x.id} t={x} hideProj onEdit={setEdit} />)}</div> : <div className="empty flat">还没有任务</div>}
             {editable && <form className="addtask" onSubmit={addTask} autoComplete="off"><input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="新任务" required /><input type="date" value={due} onChange={e => setDue(e.target.value)} /><button className="btn sm pri" type="submit">添加</button></form>}
           </div>
+          <div className="panel"><div className="hd"><h2>文件</h2></div><div className="bd"><FilesPanel scope={{ projectId: id }} /></div></div>
           <div className="panel"><div className="hd"><h2>阶段计划</h2></div><div className="bd">
             {p.stages?.length ? <div className="stage-rows">{p.stages.map((st, i) => (
               <div className="stage-row" key={i}>

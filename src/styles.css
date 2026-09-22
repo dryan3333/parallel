@@ -312,3 +312,21 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .tl-item.log i{background:var(--ops)}.tl-item.done i{background:var(--ok)}.tl-item.task i{background:var(--product)}
 .tl-item .clickable{cursor:pointer}
 @media (max-width:640px){.tl-day{grid-template-columns:1fr}.tl-date{text-align:left;padding:0 0 2px}}
+
+/* files */
+.files{border-radius:10px}
+.files.drag{outline:2px dashed var(--ops);outline-offset:4px}
+.files-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.frow{display:grid;grid-template-columns:26px minmax(0,1.6fr) minmax(0,1fr) 70px 150px auto;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.frow:last-child{border-bottom:0}
+.frow:hover{background:var(--surface-2)}
+.frow.head{font-size:12px;color:var(--muted);background:var(--surface-2)}
+.frow .fic{font-size:16px;text-align:center}
+.frow .fname{cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.frow .m{display:flex;gap:4px;flex-wrap:wrap}
+.frow .right{text-align:right}
+.frow .qa{display:flex;gap:2px}
+@media (max-width:760px){.frow{grid-template-columns:26px 1fr auto}.frow .m,.frow .right,.frow .small{display:none}.frow.head{display:none}}
+.usage{display:flex;align-items:center;gap:10px;margin-top:12px}
+.usage .bar{flex:1;max-width:260px;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.usage .bar i{display:block;height:100%}
