@@ -24,7 +24,7 @@ export function Members() {
           {isOwner && <div className="panel" style={{ marginTop: 16 }}><div className="hd"><h2>邀请成员</h2></div><div className="bd">
             <form onSubmit={doInvite} className="inline-form"><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="对方的邮箱" required /><button className="btn pri" type="submit">邀请</button></form>
             <p className="muted small">对方用这个邮箱注册后自动进入工作区。已注册的会立即加入。</p>
-            {invitations.length > 0 && <div className="chips">{invitations.map(i => <button key={i.id} className="chip" onClick={() => revokeInvite(i.id)} title="点击撤销">{i.email} · 待注册 ×</button>)}</div>}
+            {invitations.length > 0 && <div className="tlist flat" style={{ marginTop: 8 }}>{invitations.map(i => <div key={i.id} className="trow plain"><span className="t">{i.email}<span className="tag due" style={{ marginLeft: 8 }}>待注册</span><span className="muted small"> 对方用这个邮箱注册后自动进入</span></span><span className="m"><button className="btn sm ghost danger" onClick={async () => { if (confirm(`撤销对 ${i.email} 的邀请？撤销后她注册会进入一个空工作区。`)) await revokeInvite(i.id); }}>撤销</button></span></div>)}</div>}
           </div></div>}
           <div className="panel" style={{ marginTop: 16 }}><div className="hd"><h2>我的资料</h2></div><div className="bd">
             <form className="inline-form" onSubmit={async e => { e.preventDefault(); await updateName(name.trim()); toast('已更新'); }}><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="显示名" /><button className="btn" type="submit">保存</button></form>
