@@ -64,3 +64,11 @@ npm run dev
 - 应用关闭时的推送提醒（需要 Supabase Edge Function + Web Push，第二阶段）
 - Forest / Flora 式的花园视觉（第二阶段）
 - 桌面和手机小组件（需要原生壳，第三阶段）
+
+## 桌面端（Mac / Windows）
+
+`desktop/` 是一个 Electron 壳，加载线上地址，所以网页更新后桌面端自动跟着更新，不用重装。带系统通知和未读角标。
+
+- 本地打包 Mac：`cd desktop && npm install && npm run dist:mac`，产物在 `desktop/dist/`。
+- 云端打包 Mac + Windows：打一个 `desktop-v*` 标签推上去（或在 Actions 页手动运行「Desktop installers」），安装包会出现在仓库 Releases。
+- 安装包没有签名：Mac 第一次打开要右键 →「打开」；Windows 点「更多信息 → 仍要运行」。

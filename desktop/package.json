@@ -1,0 +1,27 @@
+{
+  "name": "parallel-desktop",
+  "productName": "平行线",
+  "version": "0.1.0",
+  "description": "平行线桌面端",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac --arm64 --x64",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "au.selabs.parallel",
+    "productName": "平行线",
+    "artifactName": "Parallel-${version}-${os}-${arch}.${ext}",
+    "files": ["main.js", "preload.js", "icon.png"],
+    "mac": { "category": "public.app-category.productivity", "target": ["dmg", "zip"], "icon": "icon.png", "identity": null },
+    "win": { "target": ["nsis"], "icon": "icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "shortcutName": "平行线" },
+    "dmg": { "title": "平行线" }
+  }
+}

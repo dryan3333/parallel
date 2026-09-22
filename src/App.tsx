@@ -25,10 +25,12 @@ export function App() {
     window.addEventListener('beforeinstallprompt', f); return () => window.removeEventListener('beforeinstallprompt', f);
   }, []);
   useEffect(() => { const f = () => setRoute(parse()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
+  const unreadAll = user ? reminders.filter(r => r.to_user === user.id && !r.read).length : 0;
+  useEffect(() => { try { (window as unknown as { parallelDesktop?: { setBadge: (n: number) => void } }).parallelDesktop?.setBadge(unreadAll); } catch { /* ignore */ } }, [unreadAll]);
   if (!ready) return <div className="center-screen muted">载入中…</div>;
   if (!user) return <Login />;
   if (!wsId) return <div className="center-screen"><p className="muted">正在准备你的工作区…</p><button className="btn" onClick={reload}>重试</button></div>;
-  const unread = reminders.filter(r => r.to_user === user.id && !r.read).length;
+  const unread = unreadAll;
   const nav: [string, string, string][] = [['today', '今天', '☀'], ['clients', '客户', '◎'], ['week', '本周', '▦'], ['board', '看板', '☰'], ['projects', '项目', '◫'], ['files', '文件', '▤'], ['inbox', '提醒', '◔'], ['members', '成员', '☺']];
   const mobileNav = nav.filter(([v]) => ['today', 'clients', 'board', 'inbox'].includes(v));
   const moreNav = nav.filter(([v]) => ['week', 'projects', 'files', 'members'].includes(v));
