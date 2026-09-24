@@ -3,7 +3,8 @@ import { useStore } from '../state/store';
 import { supabase } from '../lib/supabase';
 
 export function Members() {
-  const { members, invitations, role, user, invite, revokeInvite, removeMember, updateName, memberName, toast, projects, projectMembers, setProjectMember } = useStore();
+  const { members, invitations, role, user, invite, revokeInvite, removeMember, updateName, memberName, toast, projects, projectMembers, setProjectMember, tasks, clients, reminders, routines, files } = useStore();
+  const exportAll = () => { const data = { exported_at: new Date().toISOString(), members, projects, tasks, clients, reminders, routines, files }; const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `parallel-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); toast('已导出，请存到你自己的网盘'); };
   const [email, setEmail] = useState(''); const [name, setName] = useState(memberName(user?.id));
   const isOwner = role === 'owner';
   const doInvite = async (e: React.FormEvent) => { e.preventDefault(); const err = await invite(email); if (err) toast('邀请失败：' + err); else { toast('已邀请'); setEmail(''); } };
@@ -28,7 +29,8 @@ export function Members() {
           </div></div>}
           <div className="panel" style={{ marginTop: 16 }}><div className="hd"><h2>我的资料</h2></div><div className="bd">
             <form className="inline-form" onSubmit={async e => { e.preventDefault(); await updateName(name.trim()); toast('已更新'); }}><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="显示名" /><button className="btn" type="submit">保存</button></form>
-            <div style={{ marginTop: 10 }}><button className="btn sm ghost" onClick={() => supabase.auth.signOut()}>退出登录</button></div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>{isOwner && <button className="btn sm" onClick={exportAll}>导出全部数据备份</button>}<button className="btn sm ghost" onClick={() => supabase.auth.signOut()}>退出登录</button></div>
+            {isOwner && <p className="muted small" style={{ marginTop: 8 }}>免费版数据库没有自动备份。每周导出一次存到网盘，出事能恢复。</p>}
           </div></div>
         </div>
         {isOwner && <div className="panel"><div className="hd"><h2>项目权限矩阵</h2><span className="muted small">勾选 = 可修改和执行</span></div>

@@ -4,6 +4,7 @@ import type { Task } from '../lib/types';
 import { addDays, todayStr } from '../lib/util';
 import { PriTag, ProjTag, WhoTag } from '../components/Tags';
 import { TaskDialog } from '../components/Dialogs';
+import { WeeklyDigest } from '../components/WeeklyDigest';
 
 const WD = ['一', '二', '三', '四', '五', '六', '日'];
 const mondayOf = (s: string) => { const d = new Date(s + 'T00:00:00'); const off = (d.getDay() + 6) % 7; return addDays(s, -off); };
@@ -40,6 +41,7 @@ export function Week() {
         <div className="chips"><button className="chip" onClick={() => setStart(addDays(start, -7))}>‹ 上周</button><button className="chip" onClick={() => setStart(mondayOf(t))}>本周</button><button className="chip" onClick={() => setStart(addDays(start, 7))}>下周 ›</button></div>
         <span className="sub">{start.slice(5).replace('-', '/')} 至 {days[6].slice(5).replace('-', '/')} · 拖动卡片改截止日</span>
         <span className="spacer" /><button className="btn" onClick={() => setEdit({ due: t })}>+ 任务</button></div>
+      <WeeklyDigest start={start} />
       <div className="week">
         {days.map((d, i) => {
           const list = tasks.filter(x => x.due === d).sort((a, b) => Number(a.status === 'done') - Number(b.status === 'done'));

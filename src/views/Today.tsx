@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import type { Task } from '../lib/types';
-import { addDays, parseQuick, todayStr } from '../lib/util';
+import { addDays, lastLogDate, parseQuick, todayStr } from '../lib/util';
+const lastLogDateSafe = (log: string) => !!lastLogDate(log || '');
 import { TaskRow } from '../components/TaskRow';
 import { TaskDialog } from '../components/Dialogs';
 import { Garden } from '../components/Garden';
@@ -13,7 +14,7 @@ const setPref = (k: string, v: string) => { try { localStorage.setItem('pxl.' + 
 /* 首屏 = 收件箱 + 今天，抄 Todoist「今天」+ Linear「Inbox」：
    未读提醒在最上，逾期区可一键全部改到今天，任务行悬停有快捷操作，快速添加识别自然语言。 */
 export function Today() {
-  const { projects, clients, tasks, reminders, user, role, upsertTask, patchTask, toast, memberName } = useStore();
+  const { projects, clients, tasks, reminders, user, role, upsertTask, patchTask, toast, memberName, routines, members } = useStore();
   const [edit, setEdit] = useState<Partial<Task> | null>(null);
   const [mine, setMine] = useState(pref('mine', role === 'owner' ? '0' : '1') === '1');
   const [showDone, setShowDone] = useState(false);
@@ -38,6 +39,15 @@ export function Today() {
   const unread = reminders.filter(r => r.to_user === user?.id && !r.read);
   const d = new Date(); const wd = '日一二三四五六'[d.getDay()];
   const parsed = raw.trim() ? parseQuick(raw, ps, cs) : null;
+  const steps: [boolean, string, string][] = [
+    [cs.length > 0, '建第一个客户', '#clients'],
+    [ps.some(p => p.type === 'ops' && p.client_id), '把运营线 campaign 挂到客户上（项目 → 设置 → 所属客户）', '#projects'],
+    [members.length > 1, '邀请 Miranda 加入', '#members'],
+    [routines.some(r => r.active && r.kind === 'task'), '给她设每天的巡检例行任务', '#inbox'],
+    [cs.some(c => lastLogDateSafe(c.log)), '在客户页记第一笔日志', '#clients'],
+  ];
+  const stepsDone = steps.filter(s => s[0]).length;
+  const showSteps = role === 'owner' && stepsDone < steps.length && pref('steps', '1') === '1';
   const quick = async (e: React.FormEvent) => {
     e.preventDefault(); if (!parsed || !parsed.title) return;
     const r = await upsertTask({ ...parsed, status: 'todo', note: '', assignee_id: user?.id || null });
@@ -56,6 +66,8 @@ export function Today() {
         <div className="chips"><button className={`chip ${!mine ? 'on' : ''}`} onClick={() => { setMine(false); setPref('mine', '0'); }}>全部</button><button className={`chip ${mine ? 'on' : ''}`} onClick={() => { setMine(true); setPref('mine', '1'); }}>只看我的</button></div>
       </div>
 
+      {showSteps && <div className="steps"><div className="hd"><b>上手 {stepsDone}/{steps.length}</b><span className="muted small">做完这几步，这个工具才会开始替你盯事</span><span className="spacer" /><button className="btn sm ghost" onClick={() => { setPref('steps', '0'); location.reload(); }}>不再显示</button></div>
+        <div className="step-list">{steps.map(([ok, label, href], i) => <a key={i} href={href} className={`step-item ${ok ? 'ok' : ''}`}><span className={`cb ${ok ? 'on' : ''}`} /> {label}</a>)}</div></div>}
       {unread.length > 0 && <div className="section"><h2>收件箱<span className="n">{unread.length}</span><span className="spacer" /><a href="#inbox" className="btn sm ghost">全部提醒 →</a></h2>
         <div className="rlist">{unread.map(r => <ReminderCard key={r.id} r={r} />)}</div></div>}
 
