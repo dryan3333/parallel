@@ -96,9 +96,9 @@ export function parseQuick(raw: string, projects: { id: string; name: string }[]
   let project_id: string | null = null; let client_id: string | null = null;
   const t = todayStr(); const dow = new Date(t + 'T00:00:00').getDay();
   const rel: [RegExp, () => string | null][] = [
-    [/\s(今天|今日)\s/, () => t], [/\s明天\s/, () => addDays(t, 1)], [/\s后天\s/, () => addDays(t, 2)],
-    [/\s(下周|下星期)\s/, () => addDays(t, ((8 - dow) % 7) || 7)],
-    [/\s(无日期|不限|待定)\s/, () => null],
+    [/\s(今天|今日)(?=\s|[A-Za-z0-9])/, () => t], [/\s明天(?=\s|[A-Za-z0-9])/, () => addDays(t, 1)], [/\s后天(?=\s|[A-Za-z0-9])/, () => addDays(t, 2)],
+    [/\s(下周|下星期)(?=\s|[A-Za-z0-9])/, () => addDays(t, ((8 - dow) % 7) || 7)],
+    [/\s(无日期|不限|待定)(?=\s|[A-Za-z0-9])/, () => null],
   ];
   for (const [re, f] of rel) { if (re.test(text)) { due = f(); text = text.replace(re, ' '); break; } }
   const wd = text.match(/\s(下?)(周|星期)([一二三四五六日天])\s/);

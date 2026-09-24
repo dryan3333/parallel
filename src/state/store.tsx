@@ -156,7 +156,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [user, isOwner, canEdit]);
   const memberName = useCallback((uid: string | null | undefined) => {
     if (!uid) return ''; const m = members.find(x => x.user_id === uid);
-    return m ? (m.display_name || m.email.split('@')[0]) : '成员';
+    return m ? (m.display_name || m.email.split('@')[0]) : '';
   }, [members]);
 
   const upsertProject: Actions['upsertProject'] = async (p) => {

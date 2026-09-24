@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../state/store';
 import { supabase } from '../lib/supabase';
 
 export function Members() {
   const { members, invitations, role, user, invite, revokeInvite, removeMember, updateName, memberName, toast, projects, projectMembers, setProjectMember, tasks, clients, reminders, routines, files } = useStore();
   const exportAll = () => { const data = { exported_at: new Date().toISOString(), members, projects, tasks, clients, reminders, routines, files }; const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `parallel-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); toast('已导出，请存到你自己的网盘'); };
-  const [email, setEmail] = useState(''); const [name, setName] = useState(memberName(user?.id));
+  const [email, setEmail] = useState(''); const [name, setName] = useState('');
+  const meRow = members.find(m => m.user_id === user?.id);
+  useEffect(() => { if (meRow) setName(meRow.display_name || meRow.email.split('@')[0]); }, [meRow?.display_name, meRow?.email]); // eslint-disable-line
   const isOwner = role === 'owner';
   const doInvite = async (e: React.FormEvent) => { e.preventDefault(); const err = await invite(email); if (err) toast('邀请失败：' + err); else { toast('已邀请'); setEmail(''); } };
   const active = projects.filter(p => !p.archived);
