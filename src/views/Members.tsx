@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 export function Members() {
   const { members, invitations, role, user, invite, revokeInvite, removeMember, updateName, memberName, toast, projects, projectMembers, setProjectMember, tasks, clients, reminders, routines, files } = useStore();
   const exportAll = () => { const data = { exported_at: new Date().toISOString(), members, projects, tasks, clients, reminders, routines, files }; const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `parallel-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); toast('已导出，请存到你自己的网盘'); };
-  const [email, setEmail] = useState(''); const [name, setName] = useState('');
+  const [email, setEmail] = useState(''); const [name, setName] = useState(''); const [npw, setNpw] = useState('');
   const meRow = members.find(m => m.user_id === user?.id);
   useEffect(() => { if (meRow) setName(meRow.display_name || meRow.email.split('@')[0]); }, [meRow?.display_name, meRow?.email]); // eslint-disable-line
   const isOwner = role === 'owner';
@@ -31,6 +31,7 @@ export function Members() {
           </div></div>}
           <div className="panel" style={{ marginTop: 16 }}><div className="hd"><h2>我的资料</h2></div><div className="bd">
             <form className="inline-form" onSubmit={async e => { e.preventDefault(); await updateName(name.trim()); toast('已更新'); }}><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="显示名" /><button className="btn" type="submit">保存</button></form>
+            <form className="inline-form" style={{ marginTop: 8 }} onSubmit={async e => { e.preventDefault(); const { error } = await supabase.auth.updateUser({ password: npw }); if (error) toast('修改失败：' + error.message); else { setNpw(''); toast('密码已修改，其他设备用新密码登录'); } }}><input type="password" value={npw} onChange={e => setNpw(e.target.value)} placeholder="设置新密码（至少 6 位）" minLength={6} required autoComplete="new-password" /><button className="btn" type="submit">改密码</button></form>
             <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>{isOwner && <button className="btn sm" onClick={exportAll}>导出全部数据备份</button>}<button className="btn sm ghost" onClick={() => supabase.auth.signOut()}>退出登录</button></div>
             {isOwner && <p className="muted small" style={{ marginTop: 8 }}>免费版数据库没有自动备份。每周导出一次存到网盘，出事能恢复。</p>}
           </div></div>
