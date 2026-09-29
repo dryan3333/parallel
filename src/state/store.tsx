@@ -2,10 +2,19 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Client, FileRow, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
-import { fmtDue } from '../lib/util';
+import { fmtDue, todayStr } from '../lib/util';
+
+// 更新时不往回写的键：主键、归属和时间戳
+const stripMeta = (o: Record<string, unknown>) => {
+  const p = { ...o };
+  for (const k of ['id', 'workspace_id', 'created_by', 'created_at', 'updated_at']) delete p[k];
+  return p;
+};
+const NO_PERM = '没有权限修改这一条';
+const NOT_SAVED = '没保存上，已恢复';
 
 type State = {
-  session: Session | null; user: User | null; ready: boolean;
+  session: Session | null; user: User | null; ready: boolean; today: string;
   wsId: string | null; role: 'owner' | 'member' | null;
   members: Member[]; invitations: Invitation[];
   projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[]; clients: Client[]; files: FileRow[];
@@ -19,7 +28,7 @@ type Actions = {
   deleteProject: (id: string) => Promise<void>;
   upsertTask: (t: Partial<Task> & { title: string }) => Promise<Task | null>;
   deleteTask: (id: string) => Promise<void>;
-  patchTask: (id: string, patch: Partial<Task>) => Promise<boolean>;
+  patchTask: (id: string, patch: Partial<Task>, opts?: { doneNote?: string }) => Promise<boolean>;
   patchProject: (id: string, patch: Partial<Project>) => Promise<boolean>;
   upsertClient: (c: Partial<Client> & { name: string }) => Promise<Client | null>;
   patchClient: (id: string, patch: Partial<Client>) => Promise<boolean>;
@@ -59,6 +68,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [toastMsg, setToastMsg] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
+  const [today, setToday] = useState(todayStr());
+  const todayRef = useRef(today);
+  const lastPull = useRef(0);
+  const doneNotified = useRef<Set<string>>(new Set());
   const user = session?.user ?? null;
 
   const toast = useCallback((msg: string) => {
@@ -67,7 +80,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); }).catch(() => setReady(true));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -94,34 +107,73 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.from('clients').select('*').eq('workspace_id', ws).order('created_at'),
       supabase.from('files').select('*').eq('workspace_id', ws).order('created_at', { ascending: false }),
     ]);
+    lastPull.current = Date.now();
+    // 断网或请求失败时保留已有数据，不用空数组覆盖
+    if (ta.error || pr.error) { toast('网络不通，显示的是上次的数据'); return; }
     const profs = new Map((prof.data || []).map(p => [p.id, p]));
-    setMembers((mem.data || []).map(m => ({ user_id: m.user_id, role: m.role, display_name: profs.get(m.user_id)?.display_name || '', email: profs.get(m.user_id)?.email || '' })));
-    setInvitations(inv.data || []);
+    if (!mem.error && !prof.error) setMembers((mem.data || []).map(m => ({ user_id: m.user_id, role: m.role, display_name: profs.get(m.user_id)?.display_name || '', email: profs.get(m.user_id)?.email || '' })));
+    if (!inv.error) setInvitations(inv.data || []);
     setProjects((pr.data || []) as Project[]);
     setTasks((ta.data || []) as Task[]);
-    setProjectMembers((pm.data || []) as ProjectMember[]);
-    setReminders((re.data || []) as Reminder[]);
-    setRoutines((ro.data || []) as Routine[]);
-    setClients((cl.data || []) as Client[]);
-    setFiles((fi.data || []) as FileRow[]);
-  }, []);
+    if (!pm.error) setProjectMembers((pm.data || []) as ProjectMember[]);
+    if (!re.error) setReminders((re.data || []) as Reminder[]);
+    if (!ro.error) setRoutines((ro.data || []) as Routine[]);
+    if (!cl.error) setClients((cl.data || []) as Client[]);
+    if (!fi.error) setFiles((fi.data || []) as FileRow[]);
+  }, [toast]);
 
   const reload = useCallback(async () => { const ws = await loadMembership(); if (ws) await loadAll(ws); }, [loadMembership, loadAll]);
 
   useEffect(() => { if (ready) reload(); }, [ready, user?.id, reload]);
 
+  // 回到前台 / 窗口聚焦 / 恢复联网：重新拉一次（30 秒内不重复）
+  useEffect(() => {
+    if (!wsId) return;
+    const pull = () => {
+      if (Date.now() - lastPull.current < 30000) return;
+      lastPull.current = Date.now();
+      loadAll(wsId);
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') pull(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', pull);
+    window.addEventListener('online', pull);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', pull);
+      window.removeEventListener('online', pull);
+    };
+  }, [wsId, loadAll]);
+
+  // 跨天：每分钟看一眼日期，变了就换「今天」并重拉
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const t = todayStr();
+      if (t === todayRef.current) return;
+      todayRef.current = t; setToday(t);
+      if (wsId) loadAll(wsId);
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [wsId, loadAll]);
+
   // 实时：任何变化就重新拉对应的表（数据量小，简单可靠）
   useEffect(() => {
     if (!wsId || !user) return;
     const ch = supabase.channel('ws-' + wsId);
-    const refetch = (table: string) => async () => {
-      if (table === 'projects') { const { data } = await supabase.from('projects').select('*').eq('workspace_id', wsId).order('created_at'); setProjects((data || []) as Project[]); }
-      else if (table === 'tasks') { const { data } = await supabase.from('tasks').select('*').eq('workspace_id', wsId).order('created_at'); setTasks((data || []) as Task[]); }
-      else if (table === 'reminders') { const { data } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setReminders((data || []) as Reminder[]); }
-      else if (table === 'project_members') { const { data } = await supabase.from('project_members').select('*'); setProjectMembers((data || []) as ProjectMember[]); }
-      else if (table === 'clients') { const { data } = await supabase.from('clients').select('*').eq('workspace_id', wsId).order('created_at'); setClients((data || []) as Client[]); }
-      else if (table === 'files') { const { data } = await supabase.from('files').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setFiles((data || []) as FileRow[]); }
-      else if (table === 'routines') { const { data } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); setRoutines((data || []) as Routine[]); }
+    const timers: Record<string, number> = {};
+    let first = true;
+    const refetch = (table: string) => () => {
+      window.clearTimeout(timers[table]);
+      timers[table] = window.setTimeout(() => { doFetch(table); }, 300);
+    };
+    const doFetch = async (table: string) => {
+      if (table === 'projects') { const { data, error } = await supabase.from('projects').select('*').eq('workspace_id', wsId).order('created_at'); if (!error) setProjects((data || []) as Project[]); }
+      else if (table === 'tasks') { const { data, error } = await supabase.from('tasks').select('*').eq('workspace_id', wsId).order('created_at'); if (!error) setTasks((data || []) as Task[]); }
+      else if (table === 'reminders') { const { data, error } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); if (!error) setReminders((data || []) as Reminder[]); }
+      else if (table === 'project_members') { const { data, error } = await supabase.from('project_members').select('*'); if (!error) setProjectMembers((data || []) as ProjectMember[]); }
+      else if (table === 'clients') { const { data, error } = await supabase.from('clients').select('*').eq('workspace_id', wsId).order('created_at'); if (!error) setClients((data || []) as Client[]); }
+      else if (table === 'files') { const { data, error } = await supabase.from('files').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); if (!error) setFiles((data || []) as FileRow[]); }
+      else if (table === 'routines') { const { data, error } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); if (!error) setRoutines((data || []) as Routine[]); }
       else await loadAll(wsId);
     };
     for (const t of ['projects', 'tasks', 'reminders', 'project_members', 'workspace_members', 'clients', 'routines', 'files']) {
@@ -139,8 +191,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       });
     }
-    ch.subscribe();
-    return () => { supabase.removeChannel(ch); };
+    // 断线重连后补拉一次，首次订阅成功不用（刚加载过）
+    ch.subscribe(status => {
+      if (status !== 'SUBSCRIBED') return;
+      if (first) { first = false; return; }
+      loadAll(wsId);
+    });
+    return () => { for (const k of Object.keys(timers)) window.clearTimeout(timers[k]); supabase.removeChannel(ch); };
   }, [wsId, user?.id, loadAll]);
 
   const isOwner = role === 'owner';
@@ -159,13 +216,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return m ? (m.display_name || m.email.split('@')[0]) : '';
   }, [members]);
 
+  // 有 id 走 update，没 id 走 insert；update 返回 0 行说明被权限策略挡住了
+  const saveRow = async <T,>(table: 'projects' | 'tasks' | 'clients' | 'routines', input: Record<string, unknown>, fix: Record<string, unknown> = {}): Promise<{ row: T | null; err: string | null }> => {
+    if (!wsId || !user) return { row: null, err: '未登录' };
+    const id = input.id as string | undefined;
+    const { data, error } = id
+      ? await supabase.from(table).update({ ...stripMeta(input), ...fix }).eq('id', id).select()
+      : await supabase.from(table).insert({ ...input, ...fix, workspace_id: wsId, created_by: (input.created_by as string | undefined) || user.id }).select();
+    if (error) return { row: null, err: '保存失败：' + error.message };
+    if (!data || data.length === 0) return { row: null, err: id ? NO_PERM : '保存失败：没有返回数据' };
+    return { row: data[0] as T, err: null };
+  };
+  const putIn = <T extends { id: string }>(row: T) => (xs: T[]) => { const i = xs.findIndex(x => x.id === row.id); if (i < 0) return [...xs, row]; const n = xs.slice(); n[i] = row; return n; };
+  // 乐观更新，失败则把原行写回
+  const patchRow = async <T extends { id: string }>(table: 'projects' | 'tasks' | 'clients' | 'files', list: T[], setList: (f: (xs: T[]) => T[]) => void, id: string, patch: Partial<T>): Promise<boolean> => {
+    const orig = list.find(x => x.id === id);
+    setList(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x));
+    const { data, error } = await supabase.from(table).update(patch as Record<string, unknown>).eq('id', id).select('id');
+    if (error || !data || data.length === 0) {
+      if (orig) setList(xs => xs.map(x => x.id === id ? orig : x));
+      toast(NOT_SAVED); return false;
+    }
+    return true;
+  };
+  const myName = () => { const me = members.find(m => m.user_id === user?.id); return me?.display_name || me?.email?.split('@')[0] || '同事'; };
+  // 别人建的任务被我完成时，回报给创建人（同一任务本次会话只报一次）
+  const notifyDone = (task: Task, note?: string) => {
+    if (!wsId || !user || !task.created_by || task.created_by === user.id) return;
+    if (!members.some(m => m.user_id === task.created_by)) return;
+    if (doneNotified.current.has(task.id)) return;
+    doneNotified.current.add(task.id);
+    const n = note?.trim();
+    supabase.from('reminders').insert({ workspace_id: wsId, to_user: task.created_by, from_user: user.id, task_id: task.id,
+      message: `${myName()} 完成了：${task.title}${n ? '。' + n : ''}` }).then(() => {}, () => {});
+  };
+
   const upsertProject: Actions['upsertProject'] = async (p) => {
-    if (!wsId || !user) return null;
-    const row = { ...p, workspace_id: wsId, created_by: p.created_by || user.id };
-    const { data, error } = await supabase.from('projects').upsert(row).select().single();
-    if (error) { toast('保存失败：' + error.message); return null; }
-    setProjects(ps => { const i = ps.findIndex(x => x.id === data.id); if (i < 0) return [...ps, data as Project]; const n = ps.slice(); n[i] = data as Project; return n; });
-    return data as Project;
+    const { row, err } = await saveRow<Project>('projects', p);
+    if (!row) { toast(err || '保存失败'); return null; }
+    setProjects(putIn(row));
+    return row;
   };
   const deleteProject: Actions['deleteProject'] = async (id) => {
     const { error } = await supabase.from('projects').delete().eq('id', id);
@@ -174,17 +264,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const upsertTask: Actions['upsertTask'] = async (t) => {
     if (!wsId || !user) return null;
-    const row = { ...t, workspace_id: wsId, created_by: t.created_by || user.id, project_id: t.project_id || null, due: t.due || null, assignee_id: t.assignee_id || null };
     const prev = t.id ? tasks.find(x => x.id === t.id) : undefined;
-    const { data, error } = await supabase.from('tasks').upsert(row).select().single();
-    if (error) { toast('保存失败：' + error.message); return null; }
-    setTasks(ts => { const i = ts.findIndex(x => x.id === data.id); if (i < 0) return [...ts, data as Task]; const n = ts.slice(); n[i] = data as Task; return n; });
-    const saved = data as Task;
+    // 空字符串规范为 null；更新时只规范入参里带了的键，避免把没传的字段清空
+    const fix: Record<string, unknown> = {};
+    for (const k of ['project_id', 'due', 'assignee_id'] as const) if (!t.id || k in t) fix[k] = t[k] || null;
+    const { row: saved, err } = await saveRow<Task>('tasks', t, fix);
+    if (!saved) { toast(err || '保存失败'); return null; }
+    setTasks(putIn(saved));
     if (saved.assignee_id && saved.assignee_id !== user.id && saved.assignee_id !== prev?.assignee_id) {
-      const me = members.find(m => m.user_id === user.id); const myName = me?.display_name || me?.email?.split('@')[0] || '同事';
       supabase.from('reminders').insert({ workspace_id: wsId, to_user: saved.assignee_id, from_user: user.id, task_id: saved.id,
-        message: `${myName} 给你指派了任务：${saved.title}${saved.due ? '，截止 ' + fmtDue(saved.due) : ''}` }).then(() => {});
+        message: `${myName()} 给你指派了任务：${saved.title}${saved.due ? '，截止 ' + fmtDue(saved.due) : ''}` }).then(() => {});
     }
+    if (prev && prev.status !== 'done' && saved.status === 'done') notifyDone(saved);
     return saved;
   };
   const deleteTask: Actions['deleteTask'] = async (id) => {
@@ -192,29 +283,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (error) { toast('删除失败：' + error.message); return; }
     setTasks(ts => ts.filter(t => t.id !== id));
   };
-  const patchTask: Actions['patchTask'] = async (id, patch) => {
-    setTasks(ts => ts.map(t => t.id === id ? { ...t, ...patch } : t));
-    const { error } = await supabase.from('tasks').update(patch).eq('id', id);
-    if (error) { toast('保存失败：' + error.message); return false; } return true;
+  const patchTask: Actions['patchTask'] = async (id, patch, opts) => {
+    const orig = tasks.find(t => t.id === id);
+    const ok = await patchRow<Task>('tasks', tasks, setTasks, id, patch);
+    if (ok && orig && orig.status !== 'done' && patch.status === 'done') notifyDone(orig, opts?.doneNote);
+    return ok;
   };
-  const patchProject: Actions['patchProject'] = async (id, patch) => {
-    setProjects(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
-    const { error } = await supabase.from('projects').update(patch).eq('id', id);
-    if (error) { toast('保存失败：' + error.message); return false; } return true;
-  };
+  const patchProject: Actions['patchProject'] = (id, patch) => patchRow<Project>('projects', projects, setProjects, id, patch);
   const upsertClient: Actions['upsertClient'] = async (c) => {
-    if (!wsId || !user) return null;
-    const row = { ...c, workspace_id: wsId, created_by: c.created_by || user.id };
-    const { data, error } = await supabase.from('clients').upsert(row).select().single();
-    if (error) { toast('保存失败：' + error.message); return null; }
-    setClients(cs => { const i = cs.findIndex(x => x.id === data.id); if (i < 0) return [...cs, data as Client]; const n = cs.slice(); n[i] = data as Client; return n; });
-    return data as Client;
+    const { row, err } = await saveRow<Client>('clients', c);
+    if (!row) { toast(err || '保存失败'); return null; }
+    setClients(putIn(row));
+    return row;
   };
-  const patchClient: Actions['patchClient'] = async (id, patch) => {
-    setClients(cs => cs.map(c => c.id === id ? { ...c, ...patch } : c));
-    const { error } = await supabase.from('clients').update(patch).eq('id', id);
-    if (error) { toast('保存失败：' + error.message); return false; } return true;
-  };
+  const patchClient: Actions['patchClient'] = (id, patch) => patchRow<Client>('clients', clients, setClients, id, patch);
   const deleteClient: Actions['deleteClient'] = async (id) => {
     const { error } = await supabase.from('clients').delete().eq('id', id);
     if (error) { toast('删除失败：' + error.message); return; }
@@ -226,11 +308,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (error) { toast('保存失败：' + error.message); return null; }
     setFiles(fs => [data as FileRow, ...fs.filter(x => x.id !== data.id)]); return data as FileRow;
   };
-  const patchFile: Actions['patchFile'] = async (id, patch) => {
-    setFiles(fs => fs.map(f => f.id === id ? { ...f, ...patch } : f));
-    const { error } = await supabase.from('files').update(patch).eq('id', id);
-    if (error) { toast('保存失败：' + error.message); return false; } return true;
-  };
+  const patchFile: Actions['patchFile'] = (id, patch) => patchRow<FileRow>('files', files, setFiles, id, patch);
   const removeFile: Actions['removeFile'] = async (id) => {
     const { error } = await supabase.from('files').delete().eq('id', id);
     if (error) { toast('删除失败：' + error.message); return; }
@@ -253,32 +331,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const { error } = await q; if (error) { toast('分配失败：' + error.message); return; }
     const { data } = await supabase.from('project_members').select('*'); setProjectMembers((data || []) as ProjectMember[]);
   };
+  const loadReminders = async () => { if (!wsId) return; const { data, error } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); if (!error) setReminders((data || []) as Reminder[]); };
   const sendReminder: Actions['sendReminder'] = async (to, message, taskId = null, remindAt = null) => {
     if (!wsId || !user) return '未登录';
     const { error } = await supabase.from('reminders').insert({ workspace_id: wsId, to_user: to, from_user: user.id, message, task_id: taskId, remind_at: remindAt });
     if (error) return error.message;
-    const { data } = await supabase.from('reminders').select('*').eq('workspace_id', wsId).order('created_at', { ascending: false }); setReminders((data || []) as Reminder[]);
+    await loadReminders();
     return null;
   };
   const markRead: Actions['markRead'] = async (id, read = true) => {
     setReminders(rs => rs.map(r => r.id === id ? { ...r, read } : r));
-    await supabase.from('reminders').update({ read }).eq('id', id);
+    const { error } = await supabase.from('reminders').update({ read }).eq('id', id);
+    if (error) { await loadReminders(); toast(NOT_SAVED); }
   };
-  const deleteReminder: Actions['deleteReminder'] = async (id) => { setReminders(rs => rs.filter(r => r.id !== id)); await supabase.from('reminders').delete().eq('id', id); };
-  const loadRoutines = async () => { if (!wsId) return; const { data } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); setRoutines((data || []) as Routine[]); };
+  const deleteReminder: Actions['deleteReminder'] = async (id) => {
+    setReminders(rs => rs.filter(r => r.id !== id));
+    const { error } = await supabase.from('reminders').delete().eq('id', id);
+    if (error) { await loadReminders(); toast(NOT_SAVED); }
+  };
+  const loadRoutines = async () => { if (!wsId) return; const { data, error } = await supabase.from('routines').select('*').eq('workspace_id', wsId).order('created_at'); if (!error) setRoutines((data || []) as Routine[]); };
   const upsertRoutine: Actions['upsertRoutine'] = async (r) => {
     if (!wsId || !user) return '未登录';
-    const { error } = await supabase.from('routines').upsert({ ...r, workspace_id: wsId, created_by: r.created_by || user.id });
-    if (error) return error.message;
+    const { row, err } = await saveRow<Routine>('routines', r);
+    if (!row) return err || '保存失败';
     await loadRoutines(); return null;
   };
-  const deleteRoutine: Actions['deleteRoutine'] = async (id) => { setRoutines(rs => rs.filter(r => r.id !== id)); await supabase.from('routines').delete().eq('id', id); };
+  const deleteRoutine: Actions['deleteRoutine'] = async (id) => {
+    setRoutines(rs => rs.filter(r => r.id !== id));
+    const { error } = await supabase.from('routines').delete().eq('id', id);
+    if (error) { await loadRoutines(); toast(NOT_SAVED); }
+  };
   const updateName: Actions['updateName'] = async (name) => { if (!user) return; await supabase.from('profiles').update({ display_name: name }).eq('id', user.id); if (wsId) await loadAll(wsId); };
 
   const value = useMemo<State & Actions>(() => ({
-    session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files,
+    session, user, ready, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files,
     reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, patchTask, patchProject, upsertClient, patchClient, deleteClient, addFile, patchFile, removeFile, invite, revokeInvite, removeMember,
     setProjectMember, sendReminder, markRead, deleteReminder, upsertRoutine, deleteRoutine, updateName, toast, toastMsg,
-  }), [session, user, ready, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
+  }), [session, user, ready, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
