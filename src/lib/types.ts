@@ -9,7 +9,7 @@ export type Project = {
 export type Task = {
   id: string; workspace_id: string; project_id: string | null; title: string; due: string | null;
   status: Status; priority: 'normal' | 'high'; note: string; assignee_id: string | null; created_by: string; client_id: string | null;
-  done_at: string | null; created_at: string; updated_at: string;
+  done_at: string | null; created_at: string; updated_at: string; routine_id?: string | null;
 };
 export type Member = { user_id: string; role: 'owner' | 'member'; display_name: string; email: string };
 export type ProjectMember = { project_id: string; user_id: string; can_edit: boolean };

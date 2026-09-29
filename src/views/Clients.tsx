@@ -5,7 +5,7 @@ import { CHANNEL_LABEL, STAGES_CLIENT, STAGE_LABEL, addDays, lastLogDate, todayS
 import { ClientDialog } from '../components/ClientDialog';
 
 export function Clients() {
-  const { clients, projects, tasks, memberName } = useStore();
+  const { clients, projects, tasks, memberName, role } = useStore();
   const [edit, setEdit] = useState<Partial<Client> | null>(null);
   const [ch, setCh] = useState('all'); const [q, setQ] = useState('');
   const t = todayStr(); const stale = addDays(t, -3);
@@ -13,7 +13,7 @@ export function Clients() {
   const chans = Array.from(new Set(clients.flatMap(c => c.channels)));
   return (
     <>
-      <div className="page-h"><h1>客户</h1><span className="sub">Miranda 每天从这里开始巡检：点客户进去，链接一排看完，记一笔日志</span>
+      <div className="page-h"><h1>客户</h1><span className="sub">{role === 'owner' ? '每个客户的待办和最近动态都在这里' : '点客户进去，看完链接记一笔'}</span>
         <span className="spacer" /><button className="btn pri" onClick={() => setEdit({ stage: 'active', channels: [] })}>+ 新建客户</button></div>
       <div className="page-h" style={{ marginTop: -6 }}>
         <div className="chips"><button className={`chip ${ch === 'all' ? 'on' : ''}`} onClick={() => setCh('all')}>全部渠道</button>{chans.map(k => <button key={k} className={`chip ${ch === k ? 'on' : ''}`} onClick={() => setCh(k)}>{CHANNEL_LABEL(k)}</button>)}</div>

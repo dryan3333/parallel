@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import type { Client, Task } from '../lib/types';
-import { CHANNEL_LABEL, STAGE_LABEL, appendLog, fmtDue, lastLogDate, todayStr } from '../lib/util';
+import { CHANNEL_LABEL, STAGE_LABEL, appendLog, fmtDue, lastLogDate, localDate, localHM, logHint, todayStr } from '../lib/util';
 import { Stepper } from '../components/Stepper';
 import { TaskRow } from '../components/TaskRow';
 import { ClientDialog } from '../components/ClientDialog';
@@ -28,10 +28,10 @@ export function ClientDetail({ id }: { id: string }) {
     const items: Item[] = [];
     let cur = ''; for (const line of (c.log || '').split('\n')) { const m = line.match(/^## (\d{4}-\d{2}-\d{2})/); if (m) { cur = m[1]; continue; } const b = line.match(/^- (.+)/); if (b && cur) items.push({ key: 'l' + items.length, date: cur, kind: 'log', text: b[1] }); }
     for (const t of mine) {
-      items.push({ key: 'c' + t.id, date: t.created_at.slice(0, 10), time: t.created_at.slice(11, 16), kind: 'task', text: t.title, task: t });
+      items.push({ key: 'c' + t.id, date: localDate(t.created_at), time: localHM(t.created_at), kind: 'task', text: t.title, task: t });
       if (t.status === 'done' && t.done_at) items.push({ key: 'd' + t.id, date: t.done_at, kind: 'done', text: t.title, task: t });
     }
-    for (const p of camps) items.push({ key: 'p' + p.id, date: p.created_at.slice(0, 10), kind: 'campaign', text: `新建 campaign「${p.name}」`, href: `#p/${p.id}` });
+    for (const p of camps) items.push({ key: 'p' + p.id, date: localDate(p.created_at), kind: 'campaign', text: `新建 campaign「${p.name}」`, href: `#p/${p.id}` });
     return items.sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
   }, [c, mine, camps]);
   if (!c) return <div className="empty">客户不存在或已删除。<a href="#clients">返回客户列表</a></div>;
@@ -39,7 +39,7 @@ export function ClientDetail({ id }: { id: string }) {
   const last = lastLogDate(c.log); const t = todayStr();
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); const v = entry.trim(); if (!v) return;
-    if (mode === 'log') { const ok = await patchClient(id, { log: appendLog(c.log || '', v) }); if (ok) { setEntry(''); toast('已记一笔'); } }
+    if (mode === 'log') { const ok = await patchClient(id, { log: appendLog(c.log || '', v, memberName(user?.id)) }); if (ok) { setEntry(''); toast('已记一笔'); } }
     else { const r = await upsertTask({ title: v, client_id: id, due: t, status: 'todo', priority: 'normal', note: '', assignee_id: user?.id || null }); if (r) { setEntry(''); toast('已加任务'); } }
   };
   const onNote = (v: string) => {
@@ -76,7 +76,7 @@ export function ClientDetail({ id }: { id: string }) {
         <section className="crm-main">
           <form className="composer" onSubmit={submit} autoComplete="off">
             <div className="seg"><button type="button" className={mode === 'log' ? 'on' : ''} onClick={() => setMode('log')}>记一笔</button><button type="button" className={mode === 'task' ? 'on' : ''} onClick={() => setMode('task')}>加任务</button></div>
-            <input type="text" value={entry} onChange={e => setEntry(e.target.value)} placeholder={mode === 'log' ? '看完 SEO/SEM 写一句：排名、花费、异常…' : '给自己加一条今天的任务'} />
+            <input type="text" value={entry} onChange={e => setEntry(e.target.value)} placeholder={mode === 'log' ? '看完写一句：' + logHint(c.channels) : '给自己加一条今天的任务'} />
             <button className="btn pri" type="submit" disabled={!entry.trim()}>{mode === 'log' ? '记下' : '添加'}</button>
           </form>
           {open.length > 0 && <div className="section"><h2 className="clickable" onClick={() => setShowOpen(s => !s)}>{showOpen ? '▾' : '▸'} 待办<span className="n">{open.length}</span></h2>

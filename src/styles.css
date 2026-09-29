@@ -368,3 +368,13 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .more-mask{position:fixed;inset:0;z-index:5;background:transparent}
 .steps.mhint p{margin:2px 0;font-size:13.5px}
 .section > .steps{margin-bottom:0}
+
+/* 例行任务行内直接做完：第二行放客户链接和记日志输入框 */
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.trow-wrap{border-bottom:1px solid var(--line)}
+.trow-wrap:last-child{border-bottom:0}
+.trow-wrap > .trow,.trow-wrap > .trow:last-child{border-bottom:0}
+.trow-sub{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 12px 8px 44px}
+.trow-sub input[type=text]{flex:1;min-width:160px;padding:3px 8px;font-size:12px}
+.routine-warn{margin:10px 0 0}
+.routine-warn a{color:inherit}

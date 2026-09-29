@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../state/store';
 import type { Reminder } from '../lib/types';
-import { fmtTime, todayStr } from '../lib/util';
+import { fmtTime, localDate, todayStr } from '../lib/util';
 import { ReminderDialog } from './Dialogs';
 
 /* 收件箱卡片抄 Linear Inbox：一条一卡，动作就在卡上：转为任务 / 回复 / 已读 */
@@ -10,7 +10,8 @@ export function ReminderCard({ r }: { r: Reminder }) {
   const [reply, setReply] = useState(false);
   const linked = tasks.find(x => x.id === r.task_id);
   const toTask = async () => {
-    const t = await upsertTask({ title: r.message.slice(0, 80), due: r.remind_at ? r.remind_at.slice(0, 10) : todayStr(), status: 'todo', priority: 'normal', note: `来自 ${memberName(r.from_user)} 的提醒`, assignee_id: user?.id || null });
+    const td = todayStr(); const want = r.remind_at ? localDate(r.remind_at) : td;
+    const t = await upsertTask({ title: r.message.slice(0, 80), due: want < td ? td : want, status: 'todo', priority: 'normal', note: `来自 ${memberName(r.from_user)} 的提醒`, assignee_id: user?.id || null });
     if (t) { await markRead(r.id, true); toast('已转为今天的任务'); }
   };
   return (

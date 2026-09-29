@@ -83,10 +83,34 @@ export const STAGES_CLIENT: [string, string][] = [['active', '在营'], ['lead',
 export const STAGE_LABEL = (k: string) => STAGES_CLIENT.find(c => c[0] === k)?.[1] || k;
 export const LINK_PRESETS = ['官网', 'Google Analytics', 'Search Console', 'Google Ads', 'Semrush', '小红书', '飞书/Drive 文件夹'];
 export const lastLogDate = (log: string): string | null => { const m = log.match(/^## (\d{4}-\d{2}-\d{2})/m); return m ? m[1] : null; };
-export const appendLog = (log: string, text: string): string => {
+export const appendLog = (log: string, text: string, author?: string): string => {
   const t = todayStr(); const head = `## ${t}`;
-  if (log.startsWith(head)) { const i = log.indexOf('\n'); const rest = i < 0 ? '' : log.slice(i); return `${head}\n- ${text}${rest}`; }
-  return `${head}\n- ${text}\n\n${log}`.trimEnd() + '\n';
+  const now = new Date(); const who = (author || '').trim();
+  const line = `${pad(now.getHours())}:${pad(now.getMinutes())} ${who ? who + '：' : ''}${text}`;
+  if (log.startsWith(head)) { const i = log.indexOf('\n'); const rest = i < 0 ? '' : log.slice(i); return `${head}\n- ${line}${rest}`; }
+  return `${head}\n- ${line}\n\n${log}`.trimEnd() + '\n';
+};
+/* 时间戳按本地时区取日期和时分，避免 UTC 切片在悉尼差一天 */
+export const localDate = (iso: string): string => { const d = new Date(iso); return isNaN(d.getTime()) ? String(iso).slice(0, 10) : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+export const localHM = (iso: string): string => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+export const daysSince = (date: string, today: string): number => Math.round((new Date(today + 'T00:00:00').getTime() - new Date(date + 'T00:00:00').getTime()) / 86400000);
+const LOG_HINTS: Record<string, string> = { SEO: '排名变化', SEM: '花费、转化', XHS: '笔记数据、评论私信', LOCAL: '商家资料评价、来电', SOCIAL: '帖子数据、评论', WEB: '网站是否正常、表单线索' };
+export const logHint = (channels: string[]): string => {
+  const hits = (channels || []).map(k => LOG_HINTS[k]).filter(Boolean).slice(0, 2);
+  return hits.length ? hits.join('；') : '今天看到的情况';
+};
+export const routineHint = (channels: string[]): string => {
+  const ch = channels || [];
+  if (ch.includes('SEO') || ch.includes('SEM')) return '巡检 SEO / SEM 数据并记一笔日志';
+  if (ch.includes('XHS')) return '看小红书笔记数据和评论，记一笔';
+  if (ch.includes('LOCAL')) return '看 Google 商家资料和评价，记一笔';
+  return '看一遍客户的数据，记一笔';
+};
+/* 例行任务做不了的原因：客户没有链接，或文字要求看 SEO / SEM 而客户没有这两个渠道 */
+export const routineBlockers = (message: string, client: { channels: string[]; links: unknown[] } | undefined | null): { noLinks: boolean; noSeo: boolean } => {
+  if (!client) return { noLinks: false, noSeo: false };
+  const ch = client.channels || [];
+  return { noLinks: !(client.links || []).length, noSeo: /seo|sem/i.test(message) && !ch.includes('SEO') && !ch.includes('SEM') };
 };
 
 /* 快速添加解析，按真实写法识别：「明天给客户发周报」「周五 #SE Lab 写 PRD」「@Made by Cow 看 SEM」「给Miranda 查 Wow dental 评价」 */
