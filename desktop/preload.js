@@ -16,6 +16,6 @@ contextBridge.exposeInMainWorld('parallelDesktop', {
     quickAddCbs.push(cb);
     if (quickAddPending) { quickAddPending = false; setTimeout(() => { try { cb(); } catch (e) { /* ignore */ } }, 0); }
   },
-  openMain: () => ipcRenderer.send('open-main'),
+  openMain: (hash) => ipcRenderer.send('open-main', typeof hash === 'string' ? hash : ''),
   version: '0.1.2',
 });

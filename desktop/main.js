@@ -252,10 +252,22 @@ ipcMain.on('badge', (_e, n, icon) => {
   try { if (tray) tray.setToolTip(count > 0 ? `平行线 · 今天 ${count} 件` : '平行线'); } catch (e) { /* ignore */ }
 });
 
+// 主窗口和小窗可能各报一次同样的通知：相同标题和内容 5 秒内只显示一次
+const recentNotes = new Map();
+function isRepeat(key) {
+  const now = Date.now();
+  for (const [k, at] of recentNotes) { if (now - at > 5000) recentNotes.delete(k); }
+  if (recentNotes.has(key)) return true;
+  recentNotes.set(key, now);
+  return false;
+}
+
 ipcMain.on('notify', (_e, title, body) => {
   try {
     if (!Notification.isSupported()) return;
-    const n = new Notification({ title: String(title ?? '').slice(0, 200), body: String(body ?? '').slice(0, 200) });
+    const tt = String(title ?? '').slice(0, 200), bb = String(body ?? '').slice(0, 200);
+    if (isRepeat(tt + '\n' + bb)) return;
+    const n = new Notification({ title: tt, body: bb });
     n.on('click', () => {
       try {
         showMain();
@@ -266,9 +278,15 @@ ipcMain.on('notify', (_e, title, body) => {
   } catch (e) { /* ignore */ }
 });
 
-ipcMain.on('open-main', () => {
+ipcMain.on('open-main', (_e, hash) => {
   try {
     showMain();
     if (alive(widget)) widget.hide();
+    // 小窗里点了客户或项目链接：让主窗口跳过去。只接受 #today、#c/<id> 这类形式
+    if (typeof hash === 'string' && hash.length < 80 && /^#[a-z]+(\/[0-9a-f-]+)?$/.test(hash) && hash !== '#widget' && alive(win)) {
+      const wc = win.webContents;
+      const go = () => { try { if (alive(win)) win.webContents.executeJavaScript('location.hash=' + JSON.stringify(hash)).catch(() => {}); } catch (e) { /* ignore */ } };
+      if (wc.isLoading()) wc.once('did-finish-load', go); else go();
+    }
   } catch (e) { /* ignore */ }
 });

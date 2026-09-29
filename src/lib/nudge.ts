@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../state/store';
 import type { Task } from './types';
-import { notify } from './notify';
+import { IS_WIDGET, notify } from './notify';
 import { todayStr } from './util';
 
 // 「我的待办」：没做完、归我（指派给我，或没指派且是我建的）、到期日是今天或更早
@@ -58,7 +58,8 @@ export function useNudges() {
   const latest = useRef({ tasks, reminders, uid });
   latest.current = { tasks, reminders, uid };
   useEffect(() => {
-    if (!active) return;
+    // 小窗不发摘要，也不写「已发」标记，否则会抢在主窗口前面把标记占掉
+    if (!active || IS_WIDGET) return;
     const check = () => {
       const now = new Date();
       if (now.getHours() * 60 + now.getMinutes() < 8 * 60 + 30) return;

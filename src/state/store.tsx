@@ -3,7 +3,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Client, FileRow, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
 import { fmtDue, todayStr } from '../lib/util';
-import { notify } from '../lib/notify';
+import { IS_WIDGET, notify } from '../lib/notify';
 
 // 更新时不往回写的键：主键、归属和时间戳
 const stripMeta = (o: Record<string, unknown>) => {
@@ -170,6 +170,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let routineQueue: { id: string; title: string }[] = [];
     let routineTimer: number | undefined;
     const flushRoutine = () => {
+      // 小窗不发通知，也不能占掉去重标记
+      if (IS_WIDGET) { routineQueue = []; return; }
       const td = todayStr();
       // 多个窗口同时开着时只让一个发
       const list = routineQueue.filter(x => {

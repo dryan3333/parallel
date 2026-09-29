@@ -13,6 +13,7 @@ import { ClientDetail } from './views/ClientDetail';
 import { Files } from './views/Files';
 import { supabase } from './lib/supabase';
 import { useNudges } from './lib/nudge';
+import { IS_WIDGET } from './lib/notify';
 
 type Route = { v: string; id?: string };
 const parse = (): Route => { const h = location.hash.replace('#', '') || 'today'; return h.startsWith('p/') ? { v: 'project', id: h.slice(2) } : h.startsWith('c/') ? { v: 'client', id: h.slice(2) } : { v: h }; };
@@ -32,7 +33,23 @@ export function App() {
     const f = (e: Event) => { e.preventDefault(); setInstallEvt(e as Event & { prompt: () => Promise<void> }); };
     window.addEventListener('beforeinstallprompt', f); return () => window.removeEventListener('beforeinstallprompt', f);
   }, []);
-  useEffect(() => { const f = () => { setRoute(parse()); setMore(false); }; window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
+  useEffect(() => {
+    const f = () => {
+      // 桌面小窗里点到客户、项目等链接：交给主窗口打开，小窗自己留在 #widget
+      if (IS_WIDGET && parse().v !== 'widget') {
+        const open = window.parallelDesktop?.openMain;
+        if (typeof open === 'function') {
+          const h = location.hash;
+          try { history.replaceState(null, '', location.pathname + location.search + '#widget'); } catch { /* ignore */ }
+          setRoute({ v: 'widget' }); setMore(false);
+          try { open(/^#[a-z]+(\/[0-9a-f-]+)?$/.test(h) ? h : undefined); } catch { /* ignore */ }
+          return;
+        }
+      }
+      setRoute(parse()); setMore(false);
+    };
+    window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f);
+  }, []);
   const unreadAll = user ? reminders.filter(r => r.to_user === user.id && !r.read).length : 0;
   useNudges();
   const uid = user?.id;

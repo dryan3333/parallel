@@ -13,6 +13,15 @@ const setPref = (k: string, v: string) => { try { localStorage.setItem('pxl.' + 
 
 const finePointer = (() => { try { return window.matchMedia('(pointer: fine)').matches; } catch { return false; } })();
 
+/* 分区必须是模块级组件：写在 Today 函数体里的话每次重渲染都是新的组件类型，
+   任务行会被整体卸载重建，点击被吞、行内输入被清空 */
+function Sec({ name, list, cls, extra, onEdit }: { name: string; list: Task[]; cls?: string; extra?: React.ReactNode; onEdit: (t: Task) => void }) {
+  if (!list.length) return null;
+  return (
+    <div className="section"><h2 className={cls}>{name}<span className="n">{list.length}</span><span className="spacer" />{extra}</h2>
+      <div className="tlist">{list.map(x => <TaskRow key={x.id} t={x} onEdit={onEdit} />)}</div></div>);
+}
+
 /* 首屏 = 输入框 + 今天，抄 Todoist「今天」+ Linear「Inbox」：
    日期和输入框在最上，之前留下的事并入「今天」不标红，设置清单折叠在下方。
    compact 是桌面小窗（#widget）用的紧凑视图。 */
@@ -64,7 +73,7 @@ export function Today({ compact }: { compact?: boolean } = {}) {
   const ownerM = members.find(m => m.role === 'owner');
   const ownerName = ownerM ? ((ownerM.display_name || '').trim() || (ownerM.email || '').split('@')[0]) : '';
   const showMhint = !compact && role === 'member' && !mhintOff && !!user && !tasks.some(x => x.status === 'done' && isMine(x));
-  const openMain = (e: React.MouseEvent) => { const f = window.parallelDesktop?.openMain; if (typeof f === 'function') { e.preventDefault(); window.parallelDesktop!.openMain!(); } };
+  const openMain = (e: React.MouseEvent<HTMLAnchorElement>) => { const f = window.parallelDesktop?.openMain; if (typeof f === 'function') { e.preventDefault(); f(e.currentTarget.getAttribute('href') || undefined); } };
   const quick = async (e: React.FormEvent) => {
     e.preventDefault(); if (!parsed || !parsed.title) return;
     const who = parsed.assignee_id ? people.find(p => p.id === parsed.assignee_id) : null;
@@ -99,9 +108,6 @@ export function Today({ compact }: { compact?: boolean } = {}) {
     setBusy(false); toast(`${n} 条已归属`);
   };
   const closeBackfill = () => { setPref('backfill', todayStr()); setBackfillOff(true); };
-  const Sec = ({ name, list, cls, extra }: { name: string; list: Task[]; cls?: string; extra?: React.ReactNode }) => list.length ? (
-    <div className="section"><h2 className={cls}>{name}<span className="n">{list.length}</span><span className="spacer" />{extra}</h2>
-      <div className="tlist">{list.map(x => <TaskRow key={x.id} t={x} onEdit={setEdit} />)}</div></div>) : null;
   const hint = parsed && parsed.title ? [parsed.due ? (parsed.due === t ? '今天' : parsed.due === addDays(t, 1) ? '明天' : parsed.due.slice(5).replace('-', '/')) : '无日期', parsed.priority === 'high' ? 'P0' : null, parsed.project_id ? ps.find(p => p.id === parsed.project_id)?.name : null, parsed.client_id ? cs.find(c => c.id === parsed.client_id)?.name : null, parsed.assignee_id ? '派给 ' + (people.find(p => p.id === parsed.assignee_id)?.name || '') : null].filter(Boolean).join(' · ') : '';
   const examples = ['明天给客户发周报', '周五 Jarvis 看 SEM 花费', ...(people[0] ? [`给${people[0].name} 查评价`] : [])].join(' / ');
   return (
@@ -133,14 +139,14 @@ export function Today({ compact }: { compact?: boolean } = {}) {
         <p>这里是 {ownerName} 交给你的事。</p>
         <p>任务下面有客户的链接，看完在输入框写一句，回车就算完成。</p>
         <p>完成后 {ownerName} 会自动收到通知，不用再去微信说一遍。</p></div>}
-      <Sec name="今天" list={todayList} />
-      <Sec name="进行中" list={doing} />
+      <Sec name="今天" list={todayList} onEdit={setEdit} />
+      <Sec name="进行中" list={doing} onEdit={setEdit} />
       {compact ? <>
         {!todayList.length && !doing.length && <div className="empty">今天没有待办。在上面记一件事，回车就行。</div>}
         <div className="widget-foot"><a href="#today" onClick={openMain}>打开完整窗口</a></div>
       </> : <>
-        <Sec name="未来 7 天" list={soon} />
-        <Sec name="没有日期" list={nodate} />
+        <Sec name="未来 7 天" list={soon} onEdit={setEdit} />
+        <Sec name="没有日期" list={nodate} onEdit={setEdit} />
         {!todayList.length && !doing.length && !soon.length && !nodate.length && <div className="empty">今天没有待办。在上面记一件事，回车就行。</div>}
         {doneToday.length > 0 && <div className="section"><h2 className="clickable" onClick={() => setShowDone(s => !s)}>{showDone ? '▾' : '▸'} 今天完成<span className="n">{doneToday.length}</span></h2>
           {showDone && <div className="tlist">{doneToday.map(x => <TaskRow key={x.id} t={x} onEdit={setEdit} />)}</div>}</div>}
