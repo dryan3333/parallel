@@ -71,7 +71,7 @@ export const fmtDue = (s: string | null | undefined) => {
   const [y, m, d] = s.split('-');
   return (y === t.slice(0, 4) ? '' : y + '/') + Number(m) + '/' + Number(d);
 };
-export const dueClass = (s: string | null | undefined) => { if (!s) return ''; const t = todayStr(); return s < t ? 'over' : s === t ? 'today' : ''; };
+export const dueClass = (s: string | null | undefined) => { if (!s) return ''; const t = todayStr(); return s < t ? 'late' : s === t ? 'today' : ''; };
 export const fmtTime = (iso: string) => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 export const curStage = (p: Project): Stage | undefined => (p.stages || []).find(s => !s.done);
 export const nextUndoneIdx = (p: Project) => (p.stages || []).findIndex(s => !s.done);

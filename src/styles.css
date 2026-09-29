@@ -354,3 +354,17 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 /* 快速添加下方的归属条 */
 .quick-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin:6px 0}
 .quick2 + .quick-suggest{margin-top:-16px;margin-bottom:16px}
+
+/* 首屏重排：之前留下的事不标红；小窗视图；更多菜单遮罩；成员提示卡 */
+.tag.due.late{background:var(--surface-2);color:var(--muted)}
+.widget{padding:12px;min-width:320px;min-height:100vh;background:var(--bg)}
+.widget .page-h{margin-bottom:10px;gap:8px}
+.widget .page-h h1{font-size:18px}
+/* 示例提示画在输入框下方原有的空隙里，不占高度：出现和消失都不推动下面的列表 */
+.quick2 + .quick-suggest.quick-eg{display:block;height:19px;line-height:19px;margin:-21px 0 2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.widget .toast{bottom:18px}
+.widget-foot{text-align:center;margin:14px 0 4px;font-size:12.5px}
+.widget-foot a{color:var(--muted)}
+.more-mask{position:fixed;inset:0;z-index:5;background:transparent}
+.steps.mhint p{margin:2px 0;font-size:13.5px}
+.section > .steps{margin-bottom:0}

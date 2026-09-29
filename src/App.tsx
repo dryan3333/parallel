@@ -32,9 +32,32 @@ export function App() {
     const f = (e: Event) => { e.preventDefault(); setInstallEvt(e as Event & { prompt: () => Promise<void> }); };
     window.addEventListener('beforeinstallprompt', f); return () => window.removeEventListener('beforeinstallprompt', f);
   }, []);
-  useEffect(() => { const f = () => setRoute(parse()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
+  useEffect(() => { const f = () => { setRoute(parse()); setMore(false); }; window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
   const unreadAll = user ? reminders.filter(r => r.to_user === user.id && !r.read).length : 0;
   useNudges();
+  const uid = user?.id;
+  useEffect(() => {
+    if (!uid) return;
+    // 任意页面记事：回到「今天」（小窗里留在小窗），再让输入框聚焦
+    const quickAdd = () => {
+      const v = parse().v;
+      if (v !== 'today' && v !== 'widget') location.hash = '#today';
+      setTimeout(() => window.dispatchEvent(new CustomEvent('pxl:quick-add')), 50);
+    };
+    const f = (e: KeyboardEvent) => {
+      if (e.key !== 'n' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      if ((e.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable]')) return;
+      if (document.querySelector('dialog[open]')) return;
+      e.preventDefault(); quickAdd();
+    };
+    window.addEventListener('keydown', f);
+    (window as Window & { __pxlQuickAdd?: () => void }).__pxlQuickAdd = quickAdd;
+    return () => window.removeEventListener('keydown', f);
+  }, [uid]);
+  useEffect(() => {
+    // 桌面壳的全局快捷键 / 托盘菜单；壳那边没有取消订阅，所以只注册一次
+    try { window.parallelDesktop?.onQuickAdd?.(() => (window as Window & { __pxlQuickAdd?: () => void }).__pxlQuickAdd?.()); } catch { /* ignore */ }
+  }, []);
   if (!ready) return <div className="center-screen muted">载入中…</div>;
   if (!user) return <Login />;
   if (recovery) return <div className="login"><div className="login-card"><div className="brand big"><span className="lanes"><i></i><i></i></span>平行线</div><p className="muted">设置新密码</p>
@@ -45,6 +68,7 @@ export function App() {
     </form></div></div>;
   if (!wsId) return <div className="center-screen"><p className="muted">正在准备你的工作区…</p><button className="btn" onClick={reload}>重试</button></div>;
   const unread = unreadAll;
+  if (route.v === 'widget') return <><div className="widget"><Today compact /></div><div className={`toast ${toastMsg ? 'on' : ''}`}>{toastMsg}</div></>;
   const nav: [string, string, string][] = [['today', '今天', '☀'], ['clients', '客户', '◎'], ['week', '本周', '▦'], ['board', '看板', '☰'], ['projects', '项目', '◫'], ['files', '文件', '▤'], ['inbox', '提醒', '◔'], ['members', '成员', '☺']];
   const mobileNav = nav.filter(([v]) => ['today', 'clients', 'board', 'inbox'].includes(v));
   const moreNav = nav.filter(([v]) => ['week', 'projects', 'files', 'members'].includes(v));
@@ -60,6 +84,7 @@ export function App() {
       <main className="main">
         {route.v === 'clients' ? <Clients /> : route.v === 'client' ? <ClientDetail id={route.id!} /> : route.v === 'files' ? <Files /> : route.v === 'week' ? <Week /> : route.v === 'board' ? <Board /> : route.v === 'projects' ? <Projects /> : route.v === 'project' ? <ProjectDetail id={route.id!} /> : route.v === 'members' ? <Members /> : route.v === 'inbox' ? <Inbox /> : <Today />}
       </main>
+      {more && <div className="more-mask" onClick={() => setMore(false)} />}
       <nav className="tabbar">{mobileNav.map(([v, l, ic]) => <a key={v} href={'#' + v} className={on(v) ? 'on' : ''} onClick={() => setMore(false)}><span className="ic">{ic}</span>{l}{v === 'inbox' && unread > 0 && <span className="badge">{unread}</span>}</a>)}
         <a href="#" className={moreNav.some(([v]) => on(v)) ? 'on' : ''} onClick={e => { e.preventDefault(); setMore(m => !m); }}><span className="ic">⋯</span>更多</a>
         {more && <div className="more-sheet">{moreNav.map(([v, l, ic]) => <a key={v} href={'#' + v} onClick={() => setMore(false)}><span className="ic">{ic}</span>{l}</a>)}</div>}
