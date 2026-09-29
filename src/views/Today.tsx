@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import type { Task } from '../lib/types';
-import { addDays, lastLogDate, parseQuick, todayStr } from '../lib/util';
+import { addDays, lastLogDate, matchFullName, parseQuick, todayStr } from '../lib/util';
 const lastLogDateSafe = (log: string) => !!lastLogDate(log || '');
 import { TaskRow } from '../components/TaskRow';
 import { TaskDialog } from '../components/Dialogs';
@@ -14,12 +14,16 @@ const setPref = (k: string, v: string) => { try { localStorage.setItem('pxl.' + 
 /* 首屏 = 收件箱 + 今天，抄 Todoist「今天」+ Linear「Inbox」：
    未读提醒在最上，逾期区可一键全部改到今天，任务行悬停有快捷操作，快速添加识别自然语言。 */
 export function Today() {
-  const { projects, clients, tasks, reminders, user, role, upsertTask, patchTask, toast, memberName, routines, members } = useStore();
+  const { projects, clients, tasks, reminders, user, role, upsertTask, patchTask, upsertClient, canEdit, toast, memberName, routines, members } = useStore();
   const [edit, setEdit] = useState<Partial<Task> | null>(null);
   const [mine, setMine] = useState(pref('mine', role === 'owner' ? '0' : '1') === '1');
   const [showDone, setShowDone] = useState(false);
   const [showGarden, setShowGarden] = useState(pref('garden', '0') === '1');
   const [raw, setRaw] = useState('');
+  const [sug, setSug] = useState<{ id: string; word: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [backfillOff, setBackfillOff] = useState(pref('backfill', '') === todayStr());
+  useEffect(() => { if (!sug) return; const h = setTimeout(() => setSug(null), 15000); return () => clearTimeout(h); }, [sug]);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const f = (e: KeyboardEvent) => { if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !(e.target as HTMLElement)?.closest('input,textarea,[contenteditable]')) { e.preventDefault(); inputRef.current?.focus(); } };
@@ -38,7 +42,8 @@ export function Today() {
   const doneToday = all.filter(x => x.status === 'done' && x.done_at === t);
   const unread = reminders.filter(r => r.to_user === user?.id && !r.read);
   const d = new Date(); const wd = '日一二三四五六'[d.getDay()];
-  const parsed = raw.trim() ? parseQuick(raw, ps, cs) : null;
+  const people = members.filter(m => m.user_id !== user?.id).map(m => ({ id: m.user_id, name: (m.display_name || '').trim() || (m.email || '').split('@')[0] }));
+  const parsed = raw.trim() ? parseQuick(raw, ps.filter(p => canEdit(p.id)), cs, people) : null;
   const steps: [boolean, string, string][] = [
     [cs.length > 0, '建第一个客户', '#clients'],
     [ps.some(p => p.type === 'ops' && p.client_id), '把运营线 campaign 挂到客户上（项目 → 设置 → 所属客户）', '#projects'],
@@ -50,14 +55,43 @@ export function Today() {
   const showSteps = role === 'owner' && stepsDone < steps.length && pref('steps', '1') === '1';
   const quick = async (e: React.FormEvent) => {
     e.preventDefault(); if (!parsed || !parsed.title) return;
-    const r = await upsertTask({ ...parsed, status: 'todo', note: '', assignee_id: user?.id || null });
-    if (r) { setRaw(''); toast('已添加'); }
+    const who = parsed.assignee_id ? people.find(p => p.id === parsed.assignee_id) : null;
+    setSug(null);
+    const r = await upsertTask({ ...parsed, status: 'todo', note: '', assignee_id: parsed.assignee_id || user?.id || null });
+    if (!r) return;
+    setRaw(''); toast(who ? `已派给 ${who.name}` : '已添加');
+    if (!r.client_id && !r.project_id && cs.length <= 6) {
+      const w = r.title.split(/\s+/)[0] || '';
+      const known = [...clients, ...projects].some(x => x.name.toLowerCase().includes(w.toLowerCase())) || members.some(m => (m.display_name || '').toLowerCase().includes(w.toLowerCase()) || (m.email || '').split('@')[0].toLowerCase() === w.toLowerCase());
+      const word = /^[A-Za-z][A-Za-z0-9&.-]{3,}$/.test(w) && !known ? w : null;
+      if (cs.length || word) setSug({ id: r.id, word });
+    }
   };
+  const assignTo = async (clientId: string, name: string) => {
+    if (!sug || busy) return; setBusy(true);
+    const ok = await patchTask(sug.id, { client_id: clientId });
+    setBusy(false); if (ok) { toast(`已归到 ${name}`); setSug(null); }
+  };
+  const createAndAssign = async () => {
+    if (!sug?.word || busy) return; setBusy(true);
+    const name = sug.word[0].toUpperCase() + sug.word.slice(1);
+    const c = await upsertClient({ name, stage: 'lead', channels: [] });
+    if (c) { const ok = await patchTask(sug.id, { client_id: c.id }); if (ok) toast(`已建客户 ${c.name} 并归属`); setSug(null); }
+    setBusy(false);
+  };
+  const orphan = sug || backfillOff ? [] : tasks.filter(x => x.status !== 'done' && !x.client_id && isMine(x))
+    .map(x => ({ x, c: matchFullName(x.title, cs) })).filter((o): o is { x: Task; c: NonNullable<typeof o.c> } => !!o.c);
+  const backfill = async () => {
+    if (busy) return; setBusy(true); let n = 0;
+    for (const o of orphan) { if (await patchTask(o.x.id, { client_id: o.c.id })) n++; }
+    setBusy(false); toast(`${n} 条已归属`);
+  };
+  const closeBackfill = () => { setPref('backfill', todayStr()); setBackfillOff(true); };
   const rescheduleAll = async () => { for (const x of over) await patchTask(x.id, { due: t }); toast(`${over.length} 项已改到今天`); };
   const Sec = ({ name, list, cls, extra }: { name: string; list: Task[]; cls?: string; extra?: React.ReactNode }) => list.length ? (
     <div className="section"><h2 className={cls}>{name}<span className="n">{list.length}</span><span className="spacer" />{extra}</h2>
       <div className="tlist">{list.map(x => <TaskRow key={x.id} t={x} onEdit={setEdit} />)}</div></div>) : null;
-  const hint = parsed && parsed.title ? [parsed.due ? (parsed.due === t ? '今天' : parsed.due === addDays(t, 1) ? '明天' : parsed.due.slice(5).replace('-', '/')) : '无日期', parsed.priority === 'high' ? 'P0' : null, parsed.project_id ? ps.find(p => p.id === parsed.project_id)?.name : null, parsed.client_id ? cs.find(c => c.id === parsed.client_id)?.name : null].filter(Boolean).join(' · ') : '';
+  const hint = parsed && parsed.title ? [parsed.due ? (parsed.due === t ? '今天' : parsed.due === addDays(t, 1) ? '明天' : parsed.due.slice(5).replace('-', '/')) : '无日期', parsed.priority === 'high' ? 'P0' : null, parsed.project_id ? ps.find(p => p.id === parsed.project_id)?.name : null, parsed.client_id ? cs.find(c => c.id === parsed.client_id)?.name : null, parsed.assignee_id ? '派给 ' + (people.find(p => p.id === parsed.assignee_id)?.name || '') : null].filter(Boolean).join(' · ') : '';
   return (
     <>
       <div className="page-h"><h1>{d.getMonth() + 1} 月 {d.getDate()} 日，周{wd}</h1>
@@ -72,10 +106,17 @@ export function Today() {
         <div className="rlist">{unread.map(r => <ReminderCard key={r.id} r={r} />)}</div></div>}
 
       <form className="quick2" onSubmit={quick} autoComplete="off">
-        <input ref={inputRef} type="text" value={raw} onChange={e => setRaw(e.target.value)} placeholder={`加任务给${memberName(user?.id) || '我'}：「明天 给客户发周报 !」「周五 #SE Lab 写 PRD」「@客户名 看 SEM」，按 n 聚焦`} />
+        <input ref={inputRef} type="text" value={raw} onChange={e => setRaw(e.target.value)} placeholder={`加任务：「明天给客户发周报」「周五 #SE Lab 写 PRD !」${people[0] ? `「给${people[0].name} 查评价」` : '「@客户名 看 SEM」'}，按 n 聚焦`} />
         {hint && <span className="quick-hint mono">{hint}</span>}
         <button className="btn pri" type="submit" disabled={!parsed?.title}>添加</button>
       </form>
+      {sug ? <div className="quick-suggest"><span>归到客户：</span>
+        {cs.map(c => <button key={c.id} type="button" className="chip" disabled={busy} onClick={() => assignTo(c.id, c.name)}>{c.name}</button>)}
+        {sug.word && <button type="button" className="btn sm" disabled={busy} onClick={createAndAssign}>把 {sug.word} 建为客户</button>}
+        <span className="spacer" /><button type="button" className="btn sm ghost" aria-label="关闭" onClick={() => setSug(null)}>×</button></div>
+        : orphan.length > 0 ? <div className="quick-suggest"><span>有 {orphan.length} 条任务标题里提到了客户，还没归属</span>
+          <button type="button" className="btn sm" disabled={busy} onClick={backfill}>一键归属</button>
+          <span className="spacer" /><button type="button" className="btn sm ghost" aria-label="关闭" onClick={closeBackfill}>×</button></div> : null}
 
       <Sec name="已逾期" list={over} cls="over" extra={<button className="btn sm" onClick={rescheduleAll}>全部改到今天</button>} />
       <Sec name="今天" list={today} />

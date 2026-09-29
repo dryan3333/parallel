@@ -6,7 +6,7 @@ import { PRD_TPL, TYPES, defaultStages, todayStr } from '../lib/util';
 
 /* ---------- 任务 ---------- */
 export function TaskDialog({ task, onClose }: { task: Partial<Task> | null; onClose: () => void }) {
-  const { projects, members, user, upsertTask, deleteTask, canEdit, canEditTask, toast } = useStore();
+  const { projects, clients, members, user, upsertTask, deleteTask, canEdit, canEditTask, toast } = useStore();
   const [f, setF] = useState<Partial<Task>>({});
   useEffect(() => { if (task) setF({ status: 'todo', priority: 'normal', note: '', ...task }); }, [task]);
   if (!task) return null;
@@ -29,11 +29,22 @@ export function TaskDialog({ task, onClose }: { task: Partial<Task> | null; onCl
         <div className="f"><label>标题</label><input type="text" value={f.title || ''} onChange={e => set('title', e.target.value)} required autoFocus /></div>
         <div className="f2">
           <div className="f"><label>项目</label>
-            <select value={f.project_id || ''} onChange={e => set('project_id', e.target.value || null)}>
+            <select value={f.project_id || ''} onChange={e => { const id = e.target.value || null; const cid = projects.find(p => p.id === id)?.client_id || null; setF(x => ({ ...x, project_id: id, ...(cid && !x.client_id ? { client_id: cid } : {}) })); }}>
               <option value="">不关联项目</option>
               {editableProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select></div>
           <div className="f"><label>截止</label><input type="date" value={f.due || ''} onChange={e => set('due', e.target.value || null)} /></div>
+        </div>
+        <div className="f2">
+          <div className="f"><label>客户</label>
+            <select value={f.client_id || ''} onChange={e => set('client_id', e.target.value || null)}>
+              <option value="">不关联客户</option>
+              {clients.filter(c => !c.archived || c.id === f.client_id).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select></div>
+          <div className="f"><label>优先级</label>
+            <select value={f.priority || 'normal'} onChange={e => set('priority', e.target.value)}>
+              <option value="normal">普通</option><option value="high">P0 紧急</option>
+            </select></div>
         </div>
         <div className="f2">
           <div className="f"><label>负责人</label>
@@ -44,12 +55,6 @@ export function TaskDialog({ task, onClose }: { task: Partial<Task> | null; onCl
           <div className="f"><label>状态</label>
             <select value={f.status || 'todo'} onChange={e => set('status', e.target.value)}>
               <option value="todo">待办</option><option value="doing">进行中</option><option value="done">完成</option>
-            </select></div>
-        </div>
-        <div className="f2">
-          <div className="f"><label>优先级</label>
-            <select value={f.priority || 'normal'} onChange={e => set('priority', e.target.value)}>
-              <option value="normal">普通</option><option value="high">P0 紧急</option>
             </select></div>
         </div>
         <div className="f"><label>备注</label><textarea rows={3} value={f.note || ''} onChange={e => set('note', e.target.value)} /></div>

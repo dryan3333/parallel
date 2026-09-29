@@ -350,3 +350,7 @@ dialog::backdrop{background:rgba(10,14,12,.45)}
 .step-list{display:flex;flex-wrap:wrap;gap:6px 18px}
 .step-item{text-decoration:none;display:inline-flex;align-items:center;gap:8px;font-size:13.5px}
 .step-item.ok{color:var(--muted);text-decoration:line-through}
+
+/* 快速添加下方的归属条 */
+.quick-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin:6px 0}
+.quick2 + .quick-suggest{margin-top:-16px;margin-bottom:16px}

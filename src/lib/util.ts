@@ -89,30 +89,125 @@ export const appendLog = (log: string, text: string): string => {
   return `${head}\n- ${text}\n\n${log}`.trimEnd() + '\n';
 };
 
-/* Todoist 式快速添加解析：「明天 给客户发周报 !」「周五 #SE Lab 写 PRD」「@Made by Cow 看 SEM」 */
-export function parseQuick(raw: string, projects: { id: string; name: string }[], clients: { id: string; name: string }[]) {
-  let text = ' ' + raw.trim() + ' ';
+/* 快速添加解析，按真实写法识别：「明天给客户发周报」「周五 #SE Lab 写 PRD」「@Made by Cow 看 SEM」「给Miranda 查 Wow dental 评价」 */
+type Named = { id: string; name: string };
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isAn = (ch: string | undefined) => !!ch && /[A-Za-z0-9]/.test(ch);
+const nameSrc = (name: string) => name.trim().split(/\s+/).map(escRe).join('\\s*');
+const byLen = <T extends Named>(list: T[]) => [...list].filter(x => (x.name || '').trim()).sort((a, b) => b.name.length - a.name.length);
+/* 在 text 里找 name；名称两端是英文数字时，要求外侧不是英文数字，避免截到别的单词中间 */
+const findName = (text: string, name: string): { index: number; length: number } | null => {
+  const n = name.trim(); if (!n) return null;
+  const re = new RegExp(nameSrc(n), 'gi'); let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    const before = text[m.index - 1], after = text[m.index + m[0].length];
+    if (!(isAn(n[0]) && isAn(before)) && !(isAn(n[n.length - 1]) && isAn(after))) return { index: m.index, length: m[0].length };
+    re.lastIndex = m.index + 1;
+  }
+  return null;
+};
+/* 不带前缀的全名匹配：标题里出现完整名称（去空白后至少 2 个字）即命中 */
+export function matchFullName<T extends Named>(title: string, list: T[]): T | null {
+  for (const x of byLen(list)) { if (x.name.replace(/\s+/g, '').length >= 2 && findName(title, x.name)) return x; }
+  return null;
+}
+/* 名称第一个词匹配：英文至少 4 个字母，中文至少 2 个字 */
+export function matchFirstWord<T extends Named>(title: string, list: T[]): T | null {
+  for (const x of byLen(list)) {
+    const w = x.name.trim().split(/\s+/)[0] || '';
+    const ok = /^[\x21-\x7e]+$/.test(w) ? w.length >= 4 : (/[一-龥]/.test(w) && w.length >= 2);
+    if (ok && findName(title, w)) return x;
+  }
+  return null;
+}
+const ymd = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
+const realDate = (y: number, m: number, d: number) => { const x = new Date(y, m - 1, d); return x.getFullYear() === y && x.getMonth() === m - 1 && x.getDate() === d; };
+
+export function parseQuick(raw: string, projects: { id: string; name: string; client_id?: string | null }[], clients: Named[], people: Named[] = []) {
+  let text = raw.trim();
   let due: string | null = todayStr(); let priority: 'normal' | 'high' = 'normal';
-  let project_id: string | null = null; let client_id: string | null = null;
+  let project_id: string | null = null; let client_id: string | null = null; let assignee_id: string | null = null;
   const t = todayStr(); const dow = new Date(t + 'T00:00:00').getDay();
-  const rel: [RegExp, () => string | null][] = [
-    [/\s(今天|今日)(?=\s|[A-Za-z0-9])/, () => t], [/\s明天(?=\s|[A-Za-z0-9])/, () => addDays(t, 1)], [/\s后天(?=\s|[A-Za-z0-9])/, () => addDays(t, 2)],
-    [/\s(下周|下星期)(?=\s|[A-Za-z0-9])/, () => addDays(t, ((8 - dow) % 7) || 7)],
-    [/\s(无日期|不限|待定)(?=\s|[A-Za-z0-9])/, () => null],
-  ];
-  for (const [re, f] of rel) { if (re.test(text)) { due = f(); text = text.replace(re, ' '); break; } }
-  const wd = text.match(/\s(下?)(周|星期)([一二三四五六日天])\s/);
-  if (wd) { const n = '日一二三四五六'.indexOf(wd[3] === '天' ? '日' : wd[3]); let diff = (n - dow + 7) % 7; if (diff === 0) diff = 7; if (wd[1]) diff += 7; due = addDays(t, diff); text = text.replace(wd[0], ' '); }
-  const md = text.match(/\s(\d{1,2})[\/月](\d{1,2})日?\s/);
-  if (md) { const y = t.slice(0, 4); due = `${y}-${md[1].padStart(2, '0')}-${md[2].padStart(2, '0')}`; text = text.replace(md[0], ' '); }
-  if (/[!！]/.test(text)) { priority = 'high'; text = text.replace(/[!！]+/g, ' '); }
-  const pick = (prefix: string, list: { id: string; name: string }[]) => {
-    const m = text.match(new RegExp(`\\s${prefix}([^\\s#@]+)`)); if (!m) return null;
-    const q = m[1].toLowerCase(); const hit = list.find(x => x.name.toLowerCase().startsWith(q)) || list.find(x => x.name.toLowerCase().includes(q));
-    if (hit) text = text.replace(m[0], ' '); return hit?.id || null;
+
+  /* 优先级：感叹号只在句末或作为独立词时生效 */
+  const pr = (): void => {
+    const end = text.match(/\s*[!！]+$/);
+    if (end) { priority = 'high'; text = text.slice(0, end.index).trim(); return; }
+    const solo = text.match(/(^|\s)[!！]+(?=\s)/);
+    if (solo) { priority = 'high'; text = (text.slice(0, solo.index) + ' ' + text.slice(solo.index! + solo[0].length)).trim(); }
   };
-  project_id = pick('#', projects); client_id = pick('@', clients);
-  return { title: text.replace(/\s+/g, ' ').trim(), due, priority, project_id, client_id };
+  pr();
+
+  /* 日期：命中一条即停 */
+  const cut = (i: number, len: number) => { text = (text.slice(0, i) + ' ' + text.slice(i + len)).trim(); };
+  const edge = (src: string): RegExpMatchArray | null => text.match(new RegExp('^' + src + '\\s*')) || text.match(new RegExp('\\s*' + src + '$'));
+  const mdResolve = (m: number, d: number): string | null => {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const y = Number(t.slice(0, 4));
+    if (realDate(y, m, d) && ymd(y, m, d) >= t) return ymd(y, m, d);
+    if (realDate(y + 1, m, d)) return ymd(y + 1, m, d);
+    return null;
+  };
+  const dateOnce = (): boolean => {
+    const rel = edge('(今天|今日|明天|后天|无日期|不限|待定)') || edge('(下周|下星期)(?![一二三四五六日天])');
+    if (rel) {
+      const w = rel[1];
+      due = w === '今天' || w === '今日' ? t : w === '明天' ? addDays(t, 1) : w === '后天' ? addDays(t, 2) : (w === '下周' || w === '下星期') ? addDays(t, ((8 - dow) % 7) || 7) : null;
+      cut(rel.index!, rel[0].length); return true;
+    }
+    const wd = edge('(下?)(?:周|星期)([一二三四五六日天])');
+    if (wd) {
+      const n = '日一二三四五六'.indexOf(wd[2] === '天' ? '日' : wd[2]);
+      if (wd[1]) { const monday = addDays(t, -((dow + 6) % 7)); due = addDays(monday, 7 + ((n + 6) % 7)); }
+      else { let diff = (n - dow + 7) % 7; if (diff === 0) diff = 7; due = addDays(t, diff); }
+      cut(wd.index!, wd[0].length); return true;
+    }
+    const cn = /(\d{1,2})月(\d{1,2})日?(?!\d)/g; let m: RegExpExecArray | null;
+    while ((m = cn.exec(text))) {
+      if (/\d/.test(text[m.index - 1] || '')) continue;
+      const r = mdResolve(Number(m[1]), Number(m[2]));
+      if (r) { due = r; cut(m.index, m[0].length); return true; }
+    }
+    const sl = text.match(/^(\d{1,2})\/(\d{1,2})(?=\s|$)\s*/) || text.match(/(?:^|\s+)(\d{1,2})\/(\d{1,2})$/);
+    if (sl) { const r = mdResolve(Number(sl[1]), Number(sl[2])); if (r) { due = r; cut(sl.index!, sl[0].length); return true; } }
+    return false;
+  };
+  let dated = dateOnce();
+  if (priority === 'normal') pr();
+
+  /* 指派人：句首「给/让/@ + 名字」 */
+  const ppl = byLen(people).flatMap(p => { const n = p.name.trim(); const w = n.split(/\s+/)[0]; return (w !== n ? [{ id: p.id, name: n }, { id: p.id, name: w }] : [{ id: p.id, name: n }]); }).filter(p => p.name.length >= 2);
+  for (const p of ppl) {
+    const m = text.match(new RegExp('^(给|让|[@＠])?\\s*' + nameSrc(p.name), 'i'));
+    if (!m) continue;
+    if (isAn(p.name[p.name.length - 1]) && isAn(text[m[0].length])) continue;
+    assignee_id = p.id;
+    if (m[1] === '@' || m[1] === '＠') text = text.slice(m[0].length).trim();
+    break;
+  }
+
+  /* 带前缀的客户、项目 */
+  const pick = (prefix: string, list: Named[]): string | null => {
+    for (const x of byLen(list)) {
+      const m = text.match(new RegExp('(^|\\s)' + prefix + '\\s*' + nameSrc(x.name) + '(?![A-Za-z0-9])', 'i'));
+      if (m) { cut(m.index!, m[0].length); return x.id; }
+    }
+    const m = text.match(new RegExp('(^|\\s)' + prefix + '([^\\s#@＃＠]+)')); if (!m) return null;
+    const q = m[2].toLowerCase();
+    const hit = list.find(x => x.name.toLowerCase().startsWith(q)) || list.find(x => x.name.toLowerCase().includes(q));
+    if (hit) cut(m.index!, m[0].length);
+    return hit?.id || null;
+  };
+  project_id = pick('[#＃]', projects); client_id = pick('[@＠]', clients);
+  if (!dated && (project_id || client_id)) dated = dateOnce();
+
+  /* 不带前缀：全名，其次名称第一个词；标题原文保留 */
+  if (!project_id) project_id = (matchFullName(text, projects) || matchFirstWord(text, projects))?.id || null;
+  if (!client_id) client_id = (matchFullName(text, clients) || matchFirstWord(text, clients))?.id || null;
+  if (project_id && !client_id) client_id = projects.find(p => p.id === project_id)?.client_id || null;
+
+  return { title: text.replace(/\s+/g, ' ').trim(), due, priority: priority as 'normal' | 'high', project_id, client_id, assignee_id };
 }
 
 export const FILE_CATEGORIES: [string, string][] = [['contract', '合同报价'], ['brief', 'Brief'], ['asset', '素材'], ['deliverable', '交付物'], ['report', '报告数据'], ['other', '其他']];
