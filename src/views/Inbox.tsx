@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../state/store';
 import { fmtTime } from '../lib/util';
+import { isDesktop } from '../lib/notify';
 import { ReminderDialog } from '../components/Dialogs';
 import { Routines } from '../components/Routines';
 import { ReminderCard } from '../components/ReminderCard';
@@ -11,7 +12,7 @@ export function Inbox() {
   const [perm, setPerm] = useState<NotificationPermission>(typeof Notification !== 'undefined' ? Notification.permission : 'denied');
   const inbox = reminders.filter(r => r.to_user === user?.id);
   const sent = reminders.filter(r => r.from_user === user?.id);
-  const canNotify = typeof Notification !== 'undefined';
+  const canNotify = typeof Notification !== 'undefined' && !isDesktop();
   return (
     <>
       <div className="page-h"><h1>提醒</h1><span className="sub">{inbox.filter(r => !r.read).length} 条未读</span><span className="spacer" />

@@ -3,6 +3,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Client, FileRow, Invitation, Member, Project, ProjectMember, Reminder, Routine, Task } from '../lib/types';
 import { fmtDue, todayStr } from '../lib/util';
+import { notify } from '../lib/notify';
 
 // 更新时不往回写的键：主键、归属和时间戳
 const stripMeta = (o: Record<string, unknown>) => {
@@ -14,7 +15,7 @@ const NO_PERM = '没有权限修改这一条';
 const NOT_SAVED = '没保存上，已恢复';
 
 type State = {
-  session: Session | null; user: User | null; ready: boolean; today: string;
+  session: Session | null; user: User | null; ready: boolean; loaded: boolean; today: string;
   wsId: string | null; role: 'owner' | 'member' | null;
   members: Member[]; invitations: Invitation[];
   projects: Project[]; tasks: Task[]; projectMembers: ProjectMember[]; reminders: Reminder[]; routines: Routine[]; clients: Client[]; files: FileRow[];
@@ -61,6 +62,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const tasksRef = useRef<Task[]>(tasks);
+  tasksRef.current = tasks;
+  const [loaded, setLoaded] = useState(false);
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
@@ -86,7 +90,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadMembership = useCallback(async () => {
-    if (!user) { setWsId(null); setRole(null); return null; }
+    if (!user) { setWsId(null); setRole(null); setLoaded(false); return null; }
     const { data } = await supabase.from('workspace_members').select('workspace_id, role, created_at').eq('user_id', user.id).order('created_at');
     // 被邀请加入的团队工作区优先于注册时自动生成的个人工作区
     const m = (data || []).find(x => x.role === 'member') || data?.[0];
@@ -120,6 +124,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!ro.error) setRoutines((ro.data || []) as Routine[]);
     if (!cl.error) setClients((cl.data || []) as Client[]);
     if (!fi.error) setFiles((fi.data || []) as FileRow[]);
+    setLoaded(true);
   }, [toast]);
 
   const reload = useCallback(async () => { const ws = await loadMembership(); if (ws) await loadAll(ws); }, [loadMembership, loadAll]);
@@ -162,6 +167,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const ch = supabase.channel('ws-' + wsId);
     const timers: Record<string, number> = {};
     let first = true;
+    let routineQueue: { id: string; title: string }[] = [];
+    let routineTimer: number | undefined;
+    const flushRoutine = () => {
+      const td = todayStr();
+      // 多个窗口同时开着时只让一个发
+      const list = routineQueue.filter(x => {
+        const k = 'pxl.rt.' + x.id;
+        try { if (localStorage.getItem(k) === td) return false; localStorage.setItem(k, td); } catch { /* 存不了就照发 */ }
+        return true;
+      });
+      routineQueue = [];
+      if (!list.length) return;
+      notify('今天的例行任务', list.length === 1 ? list[0].title : `${list.length} 件：${list[0].title} 等`);
+    };
     const refetch = (table: string) => () => {
       window.clearTimeout(timers[table]);
       timers[table] = window.setTimeout(() => { doFetch(table); }, 300);
@@ -181,12 +200,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         refetch(t)();
         if (t === 'reminders' && payload.eventType === 'INSERT') {
           const r = payload.new as Reminder;
-          if (r.to_user === user.id && 'Notification' in window && Notification.permission === 'granted') {
-            const show = async () => {
-              try { const reg = await navigator.serviceWorker?.getRegistration(); if (reg) { await reg.showNotification('平行线提醒', { body: r.message }); return; } } catch { /* fall through */ }
-              try { new Notification('平行线提醒', { body: r.message }); } catch { /* ignore */ }
-            };
-            show();
+          if (r.to_user === user.id) notify('平行线提醒', r.message);
+        }
+        // 例行任务到点（新建或顺延到今天）时叫一声；人工指派的已经有提醒，不重复
+        if (t === 'tasks' && (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE')) {
+          const n = payload.new as Task & { routine_id?: string | null };
+          const td = todayStr();
+          if (n.routine_id && n.assignee_id === user.id && n.status !== 'done' && n.due === td) {
+            const had = tasksRef.current.find(x => x.id === n.id);
+            if ((!had || had.due !== td) && !routineQueue.some(x => x.id === n.id)) {
+              routineQueue.push({ id: n.id, title: n.title });
+              window.clearTimeout(routineTimer);
+              routineTimer = window.setTimeout(flushRoutine, 3000);
+            }
           }
         }
       });
@@ -197,7 +223,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (first) { first = false; return; }
       loadAll(wsId);
     });
-    return () => { for (const k of Object.keys(timers)) window.clearTimeout(timers[k]); supabase.removeChannel(ch); };
+    return () => { for (const k of Object.keys(timers)) window.clearTimeout(timers[k]); window.clearTimeout(routineTimer); supabase.removeChannel(ch); };
   }, [wsId, user?.id, loadAll]);
 
   const isOwner = role === 'owner';
@@ -364,9 +390,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateName: Actions['updateName'] = async (name) => { if (!user) return; await supabase.from('profiles').update({ display_name: name }).eq('id', user.id); if (wsId) await loadAll(wsId); };
 
   const value = useMemo<State & Actions>(() => ({
-    session, user, ready, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files,
+    session, user, ready, loaded, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files,
     reload, canEdit, canEditTask, memberName, upsertProject, deleteProject, upsertTask, deleteTask, patchTask, patchProject, upsertClient, patchClient, deleteClient, addFile, patchFile, removeFile, invite, revokeInvite, removeMember,
     setProjectMember, sendReminder, markRead, deleteReminder, upsertRoutine, deleteRoutine, updateName, toast, toastMsg,
-  }), [session, user, ready, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
+  }), [session, user, ready, loaded, today, wsId, role, members, invitations, projects, tasks, projectMembers, reminders, routines, clients, files, reload, canEdit, canEditTask, memberName, toast, toastMsg]); // eslint-disable-line
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

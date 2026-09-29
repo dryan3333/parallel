@@ -12,6 +12,7 @@ import { Clients } from './views/Clients';
 import { ClientDetail } from './views/ClientDetail';
 import { Files } from './views/Files';
 import { supabase } from './lib/supabase';
+import { useNudges } from './lib/nudge';
 
 type Route = { v: string; id?: string };
 const parse = (): Route => { const h = location.hash.replace('#', '') || 'today'; return h.startsWith('p/') ? { v: 'project', id: h.slice(2) } : h.startsWith('c/') ? { v: 'client', id: h.slice(2) } : { v: h }; };
@@ -33,7 +34,7 @@ export function App() {
   }, []);
   useEffect(() => { const f = () => setRoute(parse()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
   const unreadAll = user ? reminders.filter(r => r.to_user === user.id && !r.read).length : 0;
-  useEffect(() => { try { (window as unknown as { parallelDesktop?: { setBadge: (n: number) => void } }).parallelDesktop?.setBadge(unreadAll); } catch { /* ignore */ } }, [unreadAll]);
+  useNudges();
   if (!ready) return <div className="center-screen muted">载入中…</div>;
   if (!user) return <Login />;
   if (recovery) return <div className="login"><div className="login-card"><div className="brand big"><span className="lanes"><i></i><i></i></span>平行线</div><p className="muted">设置新密码</p>
